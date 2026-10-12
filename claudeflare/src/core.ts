@@ -150,7 +150,7 @@ export async function handleCoreRequest(
   if (request.method === "POST" && url.pathname === "/api/ask/chat") {
     const identity = await resolveIdentity(request, env);
     if (identity.kind === "unauthorized") {
-      return needLoginJson(request, 401, "unauthorized");
+      return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);
     }
     const resolved = await resolveModels(undefined);
     const chatRes = await handleChat(request, env, deps.fetchFn ?? fetch, {
@@ -164,7 +164,7 @@ export async function handleCoreRequest(
   // 照合: x-card-idヘッダ不一致400・所有者不一致403 (threads.ts側)。
   if (url.pathname === "/api/ask/threads" && request.method === "GET") {
     const userId = await storageUserId(request, env);
-    if (!userId) return needLoginJson(request, 401, "unauthorized");
+    if (!userId) return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);
     const store = threadStoreFor(deps, env);
     if (!store) {
       return coreCors(request, Response.json({ error: "thread store not configured" }, { status: 500 }));
@@ -176,7 +176,7 @@ export async function handleCoreRequest(
     const mThread = url.pathname.match(/^\/api\/ask\/threads\/([^/]+)$/);
     if (mThread && request.method === "GET") {
       const userId = await storageUserId(request, env);
-      if (!userId) return needLoginJson(request, 401, "unauthorized");
+      if (!userId) return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);
       const store = threadStoreFor(deps, env);
       if (!store) {
         return coreCors(request, Response.json({ error: "thread store not configured" }, { status: 500 }));
@@ -193,7 +193,7 @@ export async function handleCoreRequest(
     const mPost = url.pathname.match(/^\/api\/ask\/threads\/([^/]+)\/messages$/);
     if (mPost && request.method === "POST") {
       const userId = await storageUserId(request, env);
-      if (!userId) return needLoginJson(request, 401, "unauthorized");
+      if (!userId) return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);
       const store = threadStoreFor(deps, env);
       if (!store) {
         return coreCors(request, Response.json({ error: "thread store not configured" }, { status: 500 }));
@@ -222,7 +222,7 @@ export async function handleCoreRequest(
     const mMsg = url.pathname.match(/^\/api\/ask\/threads\/([^/]+)\/messages\/([^/]+)$/);
     if (mMsg && (request.method === "PATCH" || request.method === "DELETE")) {
       const userId = await storageUserId(request, env);
-      if (!userId) return needLoginJson(request, 401, "unauthorized");
+      if (!userId) return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);
       const store = threadStoreFor(deps, env);
       if (!store) {
         return coreCors(request, Response.json({ error: "thread store not configured" }, { status: 500 }));
@@ -257,7 +257,7 @@ export async function handleCoreRequest(
   // 保存できる。KV 未束縛は 500（面板はローカル設定にフォールバックする）。
   if (request.method === "GET" && url.pathname === "/api/settings") {
     const userId = await storageUserId(request, env);
-    if (!userId) return needLoginJson(request, 401, "unauthorized");
+    if (!userId) return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);
     const store = authStoreFor(deps, env);
     if (!store) {
       return coreCors(request, Response.json({ error: "auth store not configured" }, { status: 500 }));
@@ -270,7 +270,7 @@ export async function handleCoreRequest(
   }
   if (request.method === "POST" && url.pathname === "/api/settings") {
     const userId = await storageUserId(request, env);
-    if (!userId) return needLoginJson(request, 401, "unauthorized");
+    if (!userId) return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);
     const store = authStoreFor(deps, env);
     if (!store) {
       return coreCors(request, Response.json({ error: "auth store not configured" }, { status: 500 }));

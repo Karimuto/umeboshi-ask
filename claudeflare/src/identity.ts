@@ -24,8 +24,8 @@ import { withCors } from "./cors";
  * 保存系の 401。面板は `needLogin` を見て再ログイン・ローカル設定への
  * フォールバックへ移るので、形は完全版入口・コア入口で同一にする。
  */
-export function needLoginJson(request: Request, status: number, error: string): Response {
-  return withCors(request, Response.json({ error, needLogin: true }, { status }));
+export function needLoginJson(request: Request, status: number, error: string, allowHeaders?: string): Response {
+  return withCors(request, Response.json({ error, needLogin: true }, { status }), allowHeaders);
 }
 
 /** 認証の結論。route は kind だけ見て分岐する。 */

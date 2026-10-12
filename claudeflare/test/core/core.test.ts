@@ -482,6 +482,22 @@ describe("#264 OS4b: hosted 機構はコアに無い", () => {
       }
     }
   });
+  it("未認証 401 の許可ヘッダーにも署名ヘッダーが無い", async () => {
+    const env: CoreEnv = { OPENROUTER_API_KEY: "test-key" };
+    const unauth = [
+      await handleCoreRequest(new Request("https://ask.example/api/ask/threads"), env),
+      await handleCoreRequest(new Request("https://ask.example/api/settings"), env),
+    ];
+    for (const res of unauth) {
+      expect(res.status).toBe(401);
+      const allow = res.headers.get("Access-Control-Allow-Headers") ?? "";
+      expect(allow).not.toContain("Stripe-Signature");
+      for (const header of ["Content-Type", "Authorization", "x-card-id", "X-Anon-Id"]) {
+        expect(allow).toContain(header);
+      }
+    }
+  });
+
 
   it("モデル一覧は bundle のみで credits 字段も落ちる", async () => {
     const env: CoreEnv = { OPENROUTER_API_KEY: "test-key" };

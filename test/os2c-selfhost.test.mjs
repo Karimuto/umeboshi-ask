@@ -475,6 +475,7 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
     refreshN = 0;
     h.els["umeboshi-ask-billing-btn"].click();
     await tick(20);
+    assert.equal(refreshN, 0, "設定 token があるのに refresh を試した");
 
     // usage の 401 経路も同じガードを持つ（設定 token が無いときだけ試す。usage は module 側）。
     const g = await drive({
