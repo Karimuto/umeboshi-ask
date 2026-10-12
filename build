@@ -1,0 +1,9 @@
+#!/bin/bash
+#
+# #180: the bundled note type is gone. `src/notetypes/*/` is empty on
+# purpose — the add-on no longer ships a note type (Q4=A: injection only).
+# What remains is the panel we append to note types the user already owns.
+# It lives outside `Note Types/` on purpose — it is not a note type, and
+# writing it there would make `test/note-types-freshness.test.mjs` treat
+# it as one.
+node addon/inject-build.mjs

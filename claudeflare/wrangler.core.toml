@@ -1,0 +1,35 @@
+# #259 OS3a: 課金のない Worker コア入口。完全版 (wrangler.toml) の横に立つ
+# 2本目のデプロイ設定で、OSS として配る Worker 部分の元になる。
+#
+# #264 OS4b: hosted 運用の機構を外した最終形（本ファイルで確定）。
+#   日次 cron なし / KV はコメント例 / Node 互換 flag なし / vars ブロックなし /
+#   本番 KV ID は書かない — すべて完全版 (wrangler.toml) 側が持つ。
+#
+# 立てるのに要るのは OPENROUTER_API_KEY だけ（ASK_TOKEN は任意）。
+
+name = "umeboshi-ask-core"
+main = "src/core.ts"
+compatibility_date = "2024-09-23"
+
+# crons は持たない。モデル在庫の更新も Stripe の照合も完全版の日次cron 1本が
+# 担う（#115 / spec #110 決定7）。コアは bundle 固定5モデルで動く。
+#
+# nodejs_compat は付けない。完全版が要るのは Stripe 公式SDK (stripe-node) の
+# Node 前提の解決で、コアは課金を載せないので stripe を import しない
+# （billing・billing-view・reconcile・settle・usage・anon は読み込まない）。
+#
+# 認証はアクセストークン1本。ログイン認証（外部IdP・署名付きトークン・
+# 20文字コード）の経路は持たない（#262 OS4a: 完全版 wrangler.toml 側の仕事）。
+#   npx wrangler secret put OPENROUTER_API_KEY        # 公開リポ・ログに残さない
+#   npx wrangler secret put ASK_TOKEN                 # 任意。保存を使うときだけ
+#
+# 保存（threads・settings・面板照会）に KV は任意。束縛しなければ chat・models
+# は動き、保存系は 500 になって面板がローカル設定にフォールバックする
+# （#259 OS3a の劣化契約）。束縛する自己ホストだけ作る:
+#   npx wrangler kv namespace create UMEBOSHI_KV
+# [[kv_namespaces]]
+# binding = "UMEBOSHI_KV"
+# id = "00000000000000000000000000000000"
+#
+# ローカルで試す（KV なし）:
+#   cd claudeflare && npx wrangler dev --config wrangler.core.toml

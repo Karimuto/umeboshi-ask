@@ -1,0 +1,18 @@
+{
+  "name": "@umeboshi/ask-worker-core",
+  "version": "1.5.3",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.core.toml",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run test/core",
+    "test:core": "vitest run test/core"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "typescript": "^5.3.3",
+    "vitest": "^2.1.8",
+    "wrangler": "^3.24.0"
+  }
+}

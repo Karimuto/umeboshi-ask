@@ -1,0 +1,3709 @@
+<%# askScaffold.ejs — S1足場＋S7設定モーダル（フォルダ型5タブ＋ドリルインナビ＋検索結果リスト＋送信モード＋プロンプト編集＋言語上書き＋MIT一行）。
+    S2でSSE実送信、S3で文脈添付、S5でBearer認証、S6で保存実装済み、S8でモデルdropdown、S12でexport/import実装済み。
+    残量・課金（S10/S11）は OS5a で、同意ダイアログは OS5b で private module
+    （src/commercial/panel-module.js）へ分離した。base は同意を持たず、送信は
+    module の登録が無い即座に通る。 %>
+<style>
+  :root, :root[data-theme="light"] {
+    --ask-bg: #EDF1F4;
+    --ask-fg: #1B1E24;
+    --ask-border: #d9d9d9;
+    --ask-accent: #93233F;
+    --ask-danger-bg: #FEF3F2;
+    --ask-danger-fg: #B42318;
+    --ask-danger-border: #fecaca;
+    --ask-muted: #5A6472;
+    --ask-hit-bg: #EBE9E7;
+    --ask-hover: #d9d9d9;
+    --ask-hover-ume: #7E1E35;
+    --ask-tab-inactive: #EBE9E7;
+    --ask-tab-inactive-fg: #5A6472;
+    --ask-tabstrip-bg: #EBE9E7;
+  }
+  /* #82 Anki Desktop は reviewer 自身の document にカードを innerHTML で埋め込む
+     （ts/reviewer/index.ts:125。iframe も shadow root も無い）。そのため Anki が
+     注入する CSS がそのまま当方の要素に効く。upstream で実測した4本:
+       - qt/aqt/data/web/css/webview.scss : `* { box-sizing: content-box; }`
+         （Anki 自身のコメントに「add-ons を壊すので border-box は採らない」とある）
+       - ts/reviewer/reviewer.scss          : `button { margin: 1em 0.5em; }`
+       - ts/lib/sass/buttons.scss           : `button { padding/background/
+         border-radius/font-weight/outline }` と `button:hover { background }`
+       - ts/lib/sass/buttons.scss           : `.isWin button { font-size: 12px; }`
+     実害: model-pick が box-sizing を宣言していないため content-box で 24.4px
+     だけ幅がはみ出し、Effort ボタンに食い込んだ（A1・A3・B1）。
+     :where() の詳細度は 0 なので、この防御を1か所に置いても後続の当方宣言に
+     必ず負ける Regist する。#93 が thread-head だけ個別に直したtezza可以被
+     置き換えている。 */
+  :where(#umeboshi-ask, #umeboshi-ask-settings-modal),
+  :where(#umeboshi-ask, #umeboshi-ask-settings-modal) *,
+  :where(#umeboshi-ask, #umeboshi-ask-settings-modal) *::before,
+  :where(#umeboshi-ask, #umeboshi-ask-settings-modal) *::after { box-sizing: border-box; }
+  :where(#umeboshi-ask, #umeboshi-ask-settings-modal) button {
+    margin: 0; padding: 0; border: 0; border-radius: 0; background: none;
+    color: inherit; font: inherit; text-align: inherit; box-shadow: none;
+    appearance: none; -webkit-appearance: none;
+  }
+  #umeboshi-ask { background: var(--ask-bg); color: var(--ask-fg); margin: 1.25rem 0.75rem 0.75rem; font-family: "Hiragino Kaku Gothic ProN", system-ui, sans-serif; font-size: 16px; line-height: 1.8; }
+  #umeboshi-ask-cardid-banner {
+    background: var(--ask-danger-bg); color: var(--ask-danger-fg);
+    border: 1px solid var(--ask-danger-border); border-radius: 12px;
+    padding: .5rem .75rem; margin-bottom: .5rem; font-weight: bold;
+  }
+  /* #127 AnkiDroid は origin(ポート)がセッションごとに変わるため localStorage が毎回消える。
+     CardID バナーと同系統の赤系。ただし保存はブロックせず（Q2=a）、案内のみ。 */
+  #umeboshi-ask-storage-banner {
+    background: var(--ask-danger-bg); color: var(--ask-danger-fg);
+    border: 1px solid var(--ask-danger-border); border-radius: 12px;
+    padding: .5rem .75rem; margin-bottom: .5rem;
+  }
+  #umeboshi-ask-buttons { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: .7rem; align-items: stretch; }
+  #umeboshi-ask-buttons button[data-ask], #umeboshi-ask-buttons button[data-ask-custom] { border-radius: 9999px; padding: .55rem .95rem; font-size: 1rem; font-weight: 700; line-height: 1.4; min-height: 44px; cursor: pointer; border: 1px solid rgba(255,255,255,.9); box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); background: #EBE9E7; color: #5A6472; }
+  #umeboshi-ask-buttons button[data-ask]:hover, #umeboshi-ask-buttons button[data-ask-custom]:hover { background: var(--ask-hover); }
+  #umeboshi-ask button .umeboshi-ask-ic { display: inline-flex; width: 1.1em; height: 1.1em; vertical-align: -0.15em; margin-right: .25em; }
+  #umeboshi-ask button .umeboshi-ask-ic svg { width: 100%; height: 100%; fill: currentColor; }
+  #umeboshi-ask button .umeboshi-ask-ic:only-child { margin-right: 0; }
+  #umeboshi-ask-compose { background: #FBEFF2; background: linear-gradient(135deg, #F8E0E6 0%, #E6AEBE 35%, #EBCBC0 65%, #D7899B 100%); color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 14px; padding: .9rem 1rem 0; margin: .75rem; box-shadow: 0 6px 20px rgba(0,0,0,.10); backdrop-filter: blur(16px) saturate(160%); -webkit-backdrop-filter: blur(16px) saturate(160%); }
+  /* #89 余白: 下部のログイン行（#umeboshi-ask-auth）はピル型ボタンの影が約 8px
+     下へ伸びるため、padding-bottom 1rem だと目に見える空きは 8px しかない。
+     2rem に上げてピル下の余白を約 24px 確保する。 */
+  #umeboshi-ask-controls { margin: .75rem -1rem 0; padding: .75rem 1rem 2rem; background: rgba(255,255,255,.74); backdrop-filter: blur(16px) saturate(160%); -webkit-backdrop-filter: blur(16px) saturate(160%); border-top: 1px solid rgba(255,255,255,.9); border-radius: 0 0 13px 13px; }
+  #umeboshi-ask-input-row { display: flex; gap: .65rem; align-items: flex-end; }
+  #umeboshi-ask-input { flex: 1; min-height: 3.2rem; padding: .6rem .7rem; resize: vertical; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 16px; font-size: 16px; line-height: 1.8; box-shadow: inset 2px 2px 5px rgba(163,177,198,.5), inset -2px -2px 5px rgba(255,255,255,.9); }
+  /* #124 model/effort の✕は44pxの箱に1文字だけなので、リセットの text-align:inherit
+     （実質 start）だと✕が左へ寄る。箱の中央へ明示配置する。 */
+  #umeboshi-ask-model-close, #umeboshi-ask-effort-close { text-align: center; }
+  #umeboshi-ask-send-btn { background: #93233F; color: #FFFFFF; border: none; border-radius: 9999px; min-height: 48px; min-width: 5.5rem; padding: .7rem 1.3rem; font-size: 1rem; font-weight: 700; line-height: 1.4; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 4px 10px rgba(0,0,0,.18); text-align: center; }
+  #umeboshi-ask-send-btn:disabled { opacity: .55; cursor: default; box-shadow: none; }
+  #umeboshi-ask-send-btn:hover:not(:disabled) { background: var(--ask-hover-ume); }
+  /* #124 「設定」pillは line-height を持たず根の1.8を継承して44x48.4になっていた。
+     ✕ボタンと同じline-height:1で44x44に揃え、glyphは箱の中央へ明示配置する。
+     （旧規則の background 等はそのまま残し、色・枠・影は変えない） */
+  #umeboshi-ask-settings-btn { background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-height: 44px; min-width: 44px; padding: .55rem .7rem; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); text-align: center; }
+  #umeboshi-ask-settings-btn:hover { background: var(--ask-hover); }
+  #umeboshi-ask-send-hint { color: var(--ask-muted); font-size: .75rem; margin-top: .4rem; }
+  #umeboshi-ask-models-status { color: var(--ask-muted); font-size: .8rem; margin-top: .4rem; }
+  /* #89 余白: 保存済み解説 はカード本文（hr）の直下に乗り、1.25rem しか空かなかった。
+     thread は #umeboshi-ask の先頭要素なので margin-top は親の 1.25rem と畳み込み、
+     実効マージンは大きい方（= この 2.5rem = 40px）になる。Thread 非表示時は
+     親の 1.25rem のまま変わらない。 */
+  #umeboshi-ask-thread { background: #FFFFFF; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 14px; padding: .9rem 1rem; margin: 2.5rem .75rem .75rem; box-shadow: 0 6px 20px rgba(0,0,0,.10); text-align: left; }
+  #umeboshi-ask-thread[hidden] { display: none; }
+  #umeboshi-ask-thread-title { font-weight: bold; margin-bottom: .4rem; }
+  .umeboshi-ask-thread-item { background: rgba(255,255,255,.5); border: 1px solid rgba(255,255,255,.8); border-radius: 10px; padding: .5rem .75rem; margin-bottom: .6rem; }
+  /* #51 Saved-Thread Edit: 表示と一目で区別できる白カード＋DESIGN準拠の保存/キャンセル。 */
+  .umeboshi-ask-thread-item.is-editing { background: #FFFFFF; border: 1px solid rgba(255,255,255,.9); border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.10); }
+  .umeboshi-ask-thread-edit-label { display: block; font-size: 12px; font-weight: 700; line-height: 1.4; color: #5A6472; margin: .5rem 0 .25rem; }
+  .umeboshi-ask-thread-edit-input { display: block; width: 100%; box-sizing: border-box; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 16px; padding: 12px; font-size: 16px; line-height: 1.8; box-shadow: inset 2px 2px 5px rgba(163,177,198,.5), inset -2px -2px 5px rgba(255,255,255,.9); resize: vertical; }
+  .umeboshi-ask-thread-edit-input.umeboshi-ask-thread-edit-q { min-height: 4.5rem; }
+  .umeboshi-ask-thread-edit-input.umeboshi-ask-thread-edit-a { min-height: 8rem; }
+  .umeboshi-ask-thread-edit-actions { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: .6rem; }
+  .umeboshi-ask-thread-edit-actions .umeboshi-ask-thread-save { background: #93233F; color: #FFFFFF; border: 1px solid #93233F; border-radius: 9999px; padding: .55rem 1rem; font-size: .8rem; font-weight: 700; line-height: 1.4; min-height: 44px; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 4px 10px rgba(0,0,0,.18); }
+  .umeboshi-ask-thread-edit-actions .umeboshi-ask-thread-cancel { background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; padding: .55rem 1rem; font-size: .8rem; font-weight: 700; line-height: 1.4; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  /* #84 保存済み解説の各行の見出し。左端を item の content-box にそろえる。 */
+  /* #93 Anki の card CSS に .isWin button{font-size:12px} と button{margin:1em .5em} があって、 */
+  /*     見出しが 12px（本文16pxより小さい）、本文と操作ボタンの左端が +6px ずれていた。 */
+  /* #93 ID を足して (1,1,0) で上書きし margin は 0 に戻す。見出しは本文の +15% にする。 */
+  #umeboshi-ask .umeboshi-ask-thread-head { display: flex; width: 100%; box-sizing: border-box; gap: .5rem; align-items: baseline; text-align: left; background: transparent; border: none; border-radius: 10px; color: var(--ask-fg); margin: 0; padding: .25rem 0; cursor: pointer; font-size: 1.15em; min-height: 44px; box-shadow: none; }
+  .umeboshi-ask-thread-head:hover { background: var(--ask-hover); }
+  .umeboshi-ask-thread-head-mark { flex: none; display: inline-block; width: 1.5rem; text-align: left; color: var(--ask-muted); }
+  .umeboshi-ask-thread-head-text { flex: 1; min-width: 0; font-weight: bold; white-space: pre-wrap; overflow-wrap: break-word; }
+  .umeboshi-ask-thread-body[hidden] { display: none; }
+  /* #93 案B: ▶/▼ を幅 1.5rem の溝に収め、head の gap .5rem と合わせて 2rem だけ字下げする。 */
+  /* #93 本文・操作ボタンの左端が見出しの文字と一致する（溝 1.5rem + gap .5rem = 字下げ 2rem）。 */
+  /* #93 両方とも rem なので、Anki の html 基準（15px）や端末が変わっても比率が保たれる。 */
+  .umeboshi-ask-thread-body { padding-left: 2rem; }
+  .umeboshi-ask-thread-a { margin: .4rem 0; }
+  .umeboshi-ask-thread-status { color: var(--ask-muted); font-size: .8rem; }
+  #umeboshi-ask-current { background: transparent; border: none; box-shadow: none; border-radius: 0; padding: 0; margin: .5rem 0; color: #1B1E24; display: flex; flex-direction: column; gap: .5rem; }
+  #umeboshi-ask-current[hidden] { display: none; }
+  #umeboshi-ask-thinking { margin-bottom: 0; font-size: .85rem; color: var(--ask-muted); align-self: flex-start; }
+  #umeboshi-ask-thinking[hidden] { display: none; }
+  #umeboshi-ask-thinking-body { white-space: pre-wrap; }
+  #umeboshi-ask-stream-q { align-self: flex-end; max-width: 85%; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 14px 14px 4px 14px; padding: .45rem .7rem; font-weight: bold; white-space: pre-wrap; overflow-wrap: break-word; }
+  #umeboshi-ask-stream-q:empty { display: none; }
+  #umeboshi-ask-answer { align-self: flex-start; width: 100%; box-sizing: border-box; background: #FFFFFF; color: #1B1E24; border: 1px solid var(--ask-border); border-left: 3px solid var(--ask-accent); border-radius: 4px 14px 14px 14px; padding: .45rem .7rem; min-height: 0; overflow-wrap: break-word; }
+  #umeboshi-ask-answer:empty { display: none; }
+  #umeboshi-ask-stream-status { color: var(--ask-muted); font-size: .8rem; margin-top: 0; align-self: flex-start; }
+  #umeboshi-ask-stream-status:empty { display: none; }
+  #umeboshi-ask-messages { display: flex; flex-direction: column; gap: .5rem; }
+  .umeboshi-ask-msg { background: transparent; border: none; border-radius: 0; padding: 0; margin: .4rem 0; display: flex; flex-direction: column; gap: .4rem; }
+  .umeboshi-ask-msg-q { align-self: flex-end; max-width: 85%; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 14px 14px 4px 14px; padding: .45rem .7rem; font-weight: bold; white-space: pre-wrap; overflow-wrap: break-word; }
+  .umeboshi-ask-msg-a { align-self: flex-start; width: 100%; box-sizing: border-box; background: #FFFFFF; color: #1B1E24; border: 1px solid var(--ask-border); border-left: 3px solid var(--ask-accent); border-radius: 4px 14px 14px 14px; padding: .45rem .7rem; margin: 0; overflow-wrap: break-word; }
+  /* #87 中断 Message に残す thinking。#umeboshi-ask-thinking と同じ見た目（.85rem / 減色）。 */
+  .umeboshi-ask-msg-thinking { margin: 0; font-size: .85rem; color: var(--ask-muted); align-self: flex-start; width: 100%; box-sizing: border-box; }
+  .umeboshi-ask-msg-thinking-body { white-space: pre-wrap; overflow-wrap: break-word; }
+  .umeboshi-ask-msg-status { color: var(--ask-muted); font-size: .8rem; align-self: flex-start; }
+  .umeboshi-ask-msg-status:empty { display: none; }
+  .umeboshi-ask-msg .umeboshi-ask-row { align-self: flex-start; display: flex; gap: .4rem; flex-wrap: wrap; }
+  .umeboshi-ask-thread-body .umeboshi-ask-row button, .umeboshi-ask-msg .umeboshi-ask-row button { background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; margin: 0; padding: .4rem .7rem; font-size: .8rem; font-weight: 400; line-height: 1.4; min-height: 40px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  .umeboshi-ask-thread-body .umeboshi-ask-row button:hover, .umeboshi-ask-msg .umeboshi-ask-row button:hover { background: var(--ask-hover); }
+  /* umeboshi-ask:module:css:e begin */
+  /* umeboshi-ask:module:css:e end */
+  /* #250 Copy URL の手運び導線（URL表示＋コピー）はモデル選択と同じ popup にした。
+     inline の箱（#76）は撤廃。値は下の #umeboshi-ask-url-popup（モデルpopupと完全に同一）。 */
+  /* umeboshi-ask:module:css:a begin */
+  /* umeboshi-ask:module:css:a end */
+  .umeboshi-ask-url-input { box-sizing: border-box; width: 100%; min-width: 0; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: .5rem; padding: .5rem .6rem; min-height: 44px; font-size: .78rem; font-family: monospace; box-shadow: inset 2px 2px 5px rgba(163,177,198,.5), inset -2px -2px 5px rgba(255,255,255,.9); }
+  /* #82 root の ID を前置（(1,1,0)）。Anki の `.isWin button`/`.fancy button` に勝つ。
+     変異注入テストがこの class を検出した（メッセージ内のコピーボタンは初期描画に
+     現れないため、ブラウザ実測では漏れていた）。 */
+  #umeboshi-ask .umeboshi-ask-copy-btn { align-self: flex-start; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; padding: .45rem .8rem; min-height: 44px; font-size: .85rem; font-weight: 400; line-height: 1.4; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  #umeboshi-ask .umeboshi-ask-copy-btn:hover { background: var(--ask-hover); }
+  /* umeboshi-ask:module:css:b begin */
+  #umeboshi-ask-url-copy-status { min-height: 1.2em; }
+  /* umeboshi-ask:module:css:b end */
+  /* 説明文は .umeboshi-ask-note を再利用しない。設定パネルは detail-mode で .umeboshi-ask-note を隠す
+     仕様（ドリルイン既存CSS）のため、同じクラスだと案内が空打ちになる。 */
+  .umeboshi-ask-fallback-note { color: var(--ask-muted); font-size: .8rem; }
+  #umeboshi-ask-model-row { display: flex; gap: .5rem; align-items: center; font-size: .85rem; flex-wrap: wrap; }
+  #umeboshi-ask-model { flex: 1; min-width: 0; text-align: left; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; padding: .5rem .8rem; min-height: 44px; font-size: .95rem; line-height: 1.5; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); overflow-wrap: anywhere; }
+  #umeboshi-ask-model:disabled { opacity: .55; cursor: default; box-shadow: none; }
+  #umeboshi-ask button:focus-visible, #umeboshi-ask input:focus-visible, #umeboshi-ask textarea:focus-visible { outline: 2px solid #93233F; outline-offset: 2px; }
+  /* #47 モデルpopup（非native・granumorphism）。button＋fixed層だけでAnkiのWebViewでも動く。blur非対応では半透明の dim＋白シートに落ち着く。 */
+  #umeboshi-ask-model-popup { position: fixed; inset: 0; z-index: 10000; }
+  #umeboshi-ask-model-popup[hidden] { display: none; }
+  #umeboshi-ask-model-backdrop { position: absolute; inset: 0; background: rgba(27,30,36,.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+  #umeboshi-ask-model-sheet { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(28rem, 92vw); max-height: 82vh; display: flex; flex-direction: column; background: rgba(255,255,255,.92); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,.9); border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: .6rem .8rem; color: #1B1E24; }
+  #umeboshi-ask-model-sheet-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .4rem; }
+  #umeboshi-ask-model-sheet-head b { flex: 1; font-size: 1rem; }
+  #umeboshi-ask-model-close { flex: none; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-width: 44px; min-height: 44px; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  #umeboshi-ask-model-list { overflow-y: auto; display: flex; flex-direction: column; gap: .4rem; }
+  #umeboshi-ask-model-list button:not(.umeboshi-ask-model-pick):not(.umeboshi-ask-effort-btn) { display: flex; width: 100%; box-sizing: border-box; text-align: left; align-items: center; gap: .5rem; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .7rem; font-size: .95rem; line-height: 1.5; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); overflow-wrap: anywhere; }
+  #umeboshi-ask-model-list button:not(.umeboshi-ask-model-pick):not(.umeboshi-ask-effort-btn) .umeboshi-ask-model-name { flex: 1; min-width: 0; }
+  /* #198 強さの記号（🧠＋数字）はモデル一覧・Effort一覧・4段階の3面で同じ見た目に揃える。
+     セレクタは3面分を並べる（共通classは Anki の詳細度競合を避けるためID前置を保つ）。 */
+  #umeboshi-ask-model-list button .umeboshi-ask-model-score, #umeboshi-ask-effort-list button .umeboshi-ask-model-score, #umeboshi-ask-tier-list button .umeboshi-ask-model-score { flex: none; position: relative; display: inline-flex; align-items: center; justify-content: center; width: 2.2em; height: 2.2em; font-size: 1.15rem; line-height: 1; }
+  #umeboshi-ask-model-list button .umeboshi-ask-model-score .umeboshi-ask-model-score-num, #umeboshi-ask-effort-list button .umeboshi-ask-model-score .umeboshi-ask-model-score-num, #umeboshi-ask-tier-list button .umeboshi-ask-model-score .umeboshi-ask-model-score-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: .62em; font-weight: 900; color: #1B1E24; text-shadow: 0 0 2px #FFFFFF, 0 0 2px #FFFFFF, 1px 0 0 #FFFFFF, -1px 0 0 #FFFFFF, 0 1px 0 0 #FFFFFF, 0 -1px 0 0 #FFFFFF; pointer-events: none; }
+  /* #198 未計測は `—`。数字と同じ箱に入れ、読み上げだけを付け替える。 */
+  #umeboshi-ask-effort-list button .umeboshi-ask-model-score-unknown, #umeboshi-ask-tier-list button .umeboshi-ask-model-score-unknown { flex: none; color: #5A6472; font-size: .95rem; }
+  /* #82 A2: 前半の `button[aria-checked="true"]` は (1,2,1)。175行の
+     `button.umeboshi-ask-model-pick` も (1,2,1) で詳細度が同じなので、ソース順で
+     後ろの 175行が背景と枠を上書きし、「太字だけ」になっていた。class を含む
+     セレクタを足して詳細度を上げ、選択中の白＋梅枠を確実に効かせる。 */
+  #umeboshi-ask-model-list button[aria-checked="true"], #umeboshi-ask-model-list button.umeboshi-ask-model-pick[aria-checked="true"] { background: #FFFFFF; border-color: #93233F; font-weight: bold; }
+  #umeboshi-ask-model-list button:disabled { opacity: .55; cursor: default; box-shadow: none; }
+  /* #66 Effort子popup（親popup内の入れ子・button＋fixed層でAnki WebView対応）。 */
+  #umeboshi-ask-effort-popup { position: fixed; inset: 0; z-index: 10001; }
+  #umeboshi-ask-effort-popup[hidden] { display: none; }
+  #umeboshi-ask-effort-backdrop { position: absolute; inset: 0; background: rgba(27,30,36,.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+  #umeboshi-ask-effort-sheet { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(22rem, 88vw); max-height: 70vh; display: flex; flex-direction: column; background: rgba(255,255,255,.95); border: 1px solid rgba(255,255,255,.9); border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: .6rem .8rem; color: #1B1E24; }
+  #umeboshi-ask-effort-sheet-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .4rem; }
+  #umeboshi-ask-effort-sheet-head b { flex: 1; font-size: .95rem; }
+  #umeboshi-ask .umeboshi-ask-back-btn, #umeboshi-ask #umeboshi-ask-model-back, #umeboshi-ask #umeboshi-ask-effort-back { flex: none; display: inline-flex; align-items: center; justify-content: center; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-width: 44px; min-height: 44px; padding: 0; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  #umeboshi-ask #umeboshi-ask-model-back:hover, #umeboshi-ask #umeboshi-ask-effort-back:hover { background: var(--ask-hover); }
+  #umeboshi-ask-effort-close { flex: none; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-width: 44px; min-height: 44px; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  #umeboshi-ask-effort-list { overflow-y: auto; display: flex; flex-direction: column; gap: .4rem; }
+  #umeboshi-ask-effort-list button { display: block; width: 100%; box-sizing: border-box; text-align: left; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .7rem; font-size: .95rem; line-height: 1.5; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  #umeboshi-ask-effort-list button[aria-checked="true"] { background: #FFFFFF; border-color: #93233F; font-weight: bold; }
+  /* #198 4段階（ModelTier）popup。モデルpopupと同じ button＋fixed層（#47 と同じ理由で
+     native UI は使わない）。z-index はモデルpopup(10000)より上にし、詳細モデル選択から
+     モデルpopupへ渡すときは必ず閉じてから開く。 */
+  #umeboshi-ask-tier-popup { position: fixed; inset: 0; z-index: 10002; }
+  #umeboshi-ask-tier-popup[hidden] { display: none; }
+  #umeboshi-ask-tier-backdrop { position: absolute; inset: 0; background: rgba(27,30,36,.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+  #umeboshi-ask-tier-sheet { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(24rem, 92vw); max-height: 82vh; display: flex; flex-direction: column; background: rgba(255,255,255,.92); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,.9); border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: .6rem .8rem; color: #1B1E24; }
+  #umeboshi-ask-tier-sheet-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .4rem; }
+  #umeboshi-ask-tier-sheet-head b { flex: 1; font-size: 1rem; }
+  #umeboshi-ask-tier-close { flex: none; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-width: 44px; min-height: 44px; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  #umeboshi-ask-tier-list { overflow-y: auto; display: flex; flex-direction: column; gap: .4rem; }
+  /* #198 級名・モデル名・強さ・残高の4点を1行に置く。級名は 4 段の並びを読む軸なので太字。 */
+  #umeboshi-ask-tier-list button { display: flex; width: 100%; box-sizing: border-box; text-align: left; align-items: center; gap: .5rem; flex-wrap: wrap; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .7rem; font-size: .95rem; line-height: 1.5; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); overflow-wrap: anywhere; }
+  #umeboshi-ask-tier-list button[aria-checked="true"] { background: #FFFFFF; border-color: #93233F; font-weight: bold; }
+  #umeboshi-ask-tier-list button:disabled { opacity: .55; cursor: default; box-shadow: none; }
+  #umeboshi-ask-tier-list button:hover:not([aria-checked="true"]):not(:disabled) { background: var(--ask-hover); }
+  #umeboshi-ask-tier-list .umeboshi-ask-tier-name { flex: none; display: inline-flex; align-items: center; gap: .35rem; font-weight: 700; }
+  #umeboshi-ask-tier-list .umeboshi-ask-tier-name-text { flex: none; }
+  #umeboshi-ask-tier-list .umeboshi-ask-tier-model { flex: 1 1 auto; min-width: 0; color: #5A6472; font-size: .78rem; }
+  #umeboshi-ask-tier-list .umeboshi-ask-tier-icon-svg { width: 1.3em; height: 1.3em; fill: currentColor; flex: none; }
+  #umeboshi-ask-tier-list .umeboshi-ask-tier-no-balance { flex: 1 0 100%; color: #93233F; font-size: .78rem; }
+  #umeboshi-ask-tier-foot { display: flex; margin-top: .5rem; }
+  #umeboshi-ask-tier-detail-btn { flex: 1; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .6rem .8rem; font-size: .85rem; line-height: 1.4; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  #umeboshi-ask-tier-detail-btn:hover { background: var(--ask-hover); }
+  /* #250 Copy URL の手運び導線を出す popup。モデルpopup（#47）と同じ button＋fixed層。
+     backdrop・sheet・✕ の値はモデルpopupと完全に同じ（スタイルの単一化）。
+     z-index は全 popup の上（10003）。 */
+  #umeboshi-ask-url-popup { position: fixed; inset: 0; z-index: 10003; }
+  #umeboshi-ask-url-popup[hidden] { display: none; }
+  #umeboshi-ask-url-backdrop { position: absolute; inset: 0; background: rgba(27,30,36,.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+  #umeboshi-ask-url-sheet { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(28rem, 92vw); max-height: 82vh; display: flex; flex-direction: column; background: rgba(255,255,255,.92); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,.9); border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: .6rem .8rem; color: #1B1E24; }
+  #umeboshi-ask-url-sheet-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .4rem; }
+  #umeboshi-ask-url-sheet-head b { flex: 1; font-size: 1rem; }
+  #umeboshi-ask-url-close { flex: none; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-width: 44px; min-height: 44px; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
+  /* sheet の中身は 見出し→説明→URL欄→コピー行。隙間は inline の箱（#76）の .35rem を保つ。 */
+  #umeboshi-ask-url-note { margin-bottom: .15rem; }
+  #umeboshi-ask-url-input { margin-bottom: .35rem; }
+  #umeboshi-ask-url-copy-status { flex: 1; min-width: 0; }
+  .umeboshi-ask-model-row { display: grid; grid-template-columns: minmax(0, 1fr) 9.5rem; gap: .4rem; align-items: stretch; }
+  /* #82 box-sizing を明示する。Anki の `* { box-sizing: content-box }`（詳細度0）で
+     width:100% のまま幅がpadding+border分だけ余って Effort ボタンに食い込んだ。 */
+  #umeboshi-ask-model-list button.umeboshi-ask-model-pick { flex: none; min-width: 0; width: 100%; box-sizing: border-box; display: flex; flex-wrap: wrap; text-align: left; align-items: center; gap: .5rem; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .7rem; font-size: .95rem; line-height: 1.5; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); overflow-wrap: anywhere; }
+  #umeboshi-ask-model-list button.umeboshi-ask-model-pick .umeboshi-ask-model-name { flex: 1 1 auto; min-width: 0; }
+  /* #198 モデル一覧の行の級（アイコン＋級名）とモデル側。tier sheet と同じ形。 */
+  #umeboshi-ask-model-list button .umeboshi-ask-model-tier { flex: none; display: inline-flex; align-items: center; gap: .35rem; font-weight: 700; }
+  #umeboshi-ask-model-list button .umeboshi-ask-model-tier-text { flex: none; }
+  #umeboshi-ask-tier-list .umeboshi-ask-tier-icon-svg, #umeboshi-ask-model-list .umeboshi-ask-tier-icon-svg, .umeboshi-ask-back-svg { width: 1.3em; height: 1.3em; fill: currentColor; flex: none; }
+  #umeboshi-ask-model-list button.umeboshi-ask-effort-btn { flex: none; min-width: 0; width: 100%; box-sizing: border-box; display: block; }
+  /* #82 Anki の `.isWin button`（0,1,1）と `.fancy button`（0,1,1）は詳細度が
+     class 単独（0,1,0）を上回るので、root の ID を前置して (1,1,0) まで上げる。
+     実測で font-size 12.8→12px・border-radius 10→0px・box-shadow 差し替えが起きていた。 */
+  #umeboshi-ask .umeboshi-ask-effort-btn { background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .6rem; font-size: .8rem; line-height: 1.4; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* #82 A4/C1: model と effort のボタンに :hover が1本も無く、Anki の
+     `button:hover { background: var(--button-gradient-start) }` がそのまま出て
+     ほぼ黒の矩形になっていた（C1）。選択中と無効は hover を付けない。
+     詳細度は Anki の `button:hover` (0,1,1) と `.fancy button:hover` (0,2,1) に勝たせる。 */
+  #umeboshi-ask-model-list button.umeboshi-ask-model-pick:hover:not([aria-checked="true"]):not(:disabled) { background: var(--ask-hover); }
+  #umeboshi-ask-model-list button.umeboshi-ask-effort-btn:hover:not(:disabled) { background: var(--ask-hover); }
+  #umeboshi-ask-effort-list button:hover:not([aria-checked="true"]) { background: var(--ask-hover); }
+  .umeboshi-ask-effort-slot-empty { min-width: 0; }
+  @media (prefers-reduced-motion: reduce) {
+    #umeboshi-ask *, #umeboshi-ask-settings-modal * { animation: none !important; transition: none !important; }
+  }
+  /* #26: Markdown描画の見た目（表・コード・引用・区切り線）。描画要素はpre-wrapを外す。 */
+  /* #215 左揃え: Anki のカードCSS は reviewer 文書に流入し text-align: center を
+     持ち込む（#82 で実測した4規則と同じ経路）。パネル側で明示して打ち消す。
+     面ごとに指定する（根元一括は送信ヒント等 issue 外の面まで変える）。 */
+  .umeboshi-ask-md { overflow-wrap: break-word; text-align: left; }
+  .umeboshi-ask-md h1, .umeboshi-ask-md h2, .umeboshi-ask-md h3 { margin: .5rem 0 .3rem; line-height: 1.4; }
+  .umeboshi-ask-md h1 { font-size: 1.1rem; }
+  .umeboshi-ask-md h2 { font-size: 1.02rem; }
+  .umeboshi-ask-md h3 { font-size: .95rem; }
+  .umeboshi-ask-md p { margin: .3rem 0; }
+  .umeboshi-ask-md ul, .umeboshi-ask-md ol { margin: .3rem 0; padding-left: 1.4rem; }
+  .umeboshi-ask-md pre { background: #EBE9E7; border: 1px solid var(--ask-border); border-radius: .4rem; padding: .5rem; overflow-x: auto; margin: .4rem 0; }
+  .umeboshi-ask-md pre code { background: none; padding: 0; }
+  .umeboshi-ask-md code { background: #EBE9E7; border-radius: .3rem; padding: 0 .3rem; font-family: monospace; }
+  .umeboshi-ask-md blockquote { border-left: 3px solid var(--ask-border); margin: .4rem 0; padding: .1rem 0 .1rem .6rem; color: var(--ask-muted); }
+  .umeboshi-ask-md hr { border: none; border-top: 1px solid var(--ask-border); margin: .5rem 0; }
+  .umeboshi-ask-md table { border-collapse: collapse; display: block; overflow-x: auto; margin: .4rem 0; font-size: .85rem; }
+  .umeboshi-ask-md th, .umeboshi-ask-md td { border: 1px solid var(--ask-border); padding: .3rem .5rem; text-align: left; }
+  .umeboshi-ask-md th { background: #EBE9E7; }
+  /* umeboshi-ask:module:css:c begin */
+  /* umeboshi-ask:module:css:c end */
+  /* umeboshi-ask:module:css:d begin */
+  /* umeboshi-ask:module:css:d end */
+  /* ---- S7 設定モーダル: 右スライドイン・ライト限定 ---- */
+  #umeboshi-ask-settings-modal {
+    position: fixed; inset: 0; z-index: 9999;
+    background: rgba(0,0,0,.4);
+  }
+  #umeboshi-ask-settings-modal[hidden] { display: none; }
+  .umeboshi-ask-drawer {
+    position: absolute; top: 0; right: 0; bottom: 0;
+    width: min(30rem, 94vw);
+    background: var(--ask-bg); color: var(--ask-fg);
+    border-left: 1px solid var(--ask-border);
+    display: flex; flex-direction: column;
+    box-shadow: -1rem 0 3rem rgba(0,0,0,.25);
+    animation: umeboshi-ask-slidein .3s cubic-bezier(.16,1,.3,1);
+  }
+  @keyframes umeboshi-ask-slidein { from { transform: translateX(100%); } to { transform: translateX(0); } }
+  .umeboshi-ask-head {
+    display: flex; align-items: center; gap: .5rem;
+    padding: .55rem .7rem; border-bottom: 1px solid var(--ask-border);
+  }
+  .umeboshi-ask-head h3 { margin: 0; font-size: 1rem; flex: 1; }
+  /* ×に一本化：背景と一体化した明るめボタン */
+  #umeboshi-ask-settings-close {
+    background: transparent; border: none; color: var(--ask-muted);
+    font-size: 1.15rem; line-height: 1; padding: .35rem .5rem;
+    border-radius: .45rem; cursor: pointer;
+    /* #82 Anki の `.fancy button` が box-shadow を足すので、flat 意図を明示する。 */
+    box-shadow: none;
+  }
+  #umeboshi-ask-settings-close:hover { background: var(--ask-hover); color: var(--ask-fg); }
+  .umeboshi-ask-search { padding: .5rem .7rem; border-bottom: 1px solid var(--ask-border); }
+  .umeboshi-ask-searchrow { display: flex; gap: .4rem; align-items: center; }
+  .umeboshi-ask-searchrow input {
+    flex: 1; min-width: 0; box-sizing: border-box; padding: .35rem .5rem;
+    border: 1px solid var(--ask-border); border-radius: .4rem;
+    background: var(--ask-bg); color: var(--ask-fg); font-size: .85rem;
+  }
+  #umeboshi-ask-search-clear {
+    flex: none; background: transparent; border: none; color: var(--ask-muted);
+    font-size: 1rem; line-height: 1; padding: .3rem .45rem;
+    border-radius: .45rem; cursor: pointer;
+  }
+  #umeboshi-ask-search-clear:hover { background: var(--ask-hover); color: var(--ask-fg); }
+  #umeboshi-ask-search-clear[hidden] { display: none; }
+  #umeboshi-ask-search-hint { color: var(--ask-muted); font-size: .75rem; margin-top: .25rem; }
+  /* フォルダ型タブ: Activeはパネルと一体化、下辺がつながる。5等幅 */
+  .umeboshi-ask-tabs {
+    display: flex; gap: .2rem; align-items: stretch;
+    padding: .45rem .6rem 0; background: var(--ask-tabstrip-bg);
+    border-bottom: 1px solid var(--ask-border);
+  }
+  .umeboshi-ask-tabs[hidden] { display: none; }
+  /* #82 root の ID を前置（(1,1,0)）。Anki の `.isWin button`/`.fancy button` に勝つ。 */
+  #umeboshi-ask-settings-modal .umeboshi-ask-tab {
+    flex: 1 1 0; min-width: 0;
+    border: 1px solid var(--ask-border); border-bottom: none;
+    border-radius: .45rem .45rem 0 0;
+    background: var(--ask-tab-inactive); color: var(--ask-tab-inactive-fg);
+    padding: .35rem .3rem; font-size: .72rem; line-height: 1.3; cursor: pointer;
+    margin-bottom: -1px; text-align: center;
+    overflow-wrap: anywhere; word-break: break-word;
+    box-shadow: none;
+  }
+  #umeboshi-ask-settings-modal .umeboshi-ask-tab:not(.active):hover { background: var(--ask-hover); }
+  #umeboshi-ask-settings-modal .umeboshi-ask-tab.active {
+    background: var(--ask-bg); color: var(--ask-fg); font-weight: bold;
+    padding-bottom: .5rem; position: relative; z-index: 1;
+    box-shadow: none;
+  }
+  /* 言語ごとのタブ文字サイズ・改行調整フック (data-uilang=表示言語) */
+  .umeboshi-ask-drawer[data-uilang="ja"] .umeboshi-ask-tab { font-size: .72rem; }
+  .umeboshi-ask-drawer[data-uilang="en"] .umeboshi-ask-tab { font-size: .7rem; }
+  .umeboshi-ask-tab-count { font-size: .75em; margin-left: .25em; }
+  .umeboshi-ask-body { flex: 1; overflow-y: auto; padding: .5rem .7rem .7rem; display: flex; flex-direction: column; gap: .7rem; }
+  .umeboshi-ask-panel[hidden] { display: none; }
+  /* ドリルイン: menu-modeは項目行だけ、detail-modeは開いた項目だけ */
+  .umeboshi-ask-panel.menu-mode .umeboshi-ask-item { display: none; }
+  .umeboshi-ask-panel.detail-mode .umeboshi-ask-menu,
+  .umeboshi-ask-panel.detail-mode .umeboshi-ask-note { display: none; }
+  .umeboshi-ask-panel.detail-mode .umeboshi-ask-item { display: none; }
+  .umeboshi-ask-panel.detail-mode .umeboshi-ask-item.open { display: flex; }
+  .umeboshi-ask-menu[hidden] { display: none; }
+  /* #82 root の ID を前置（(1,1,0)）。Anki の `.isWin button`/`.fancy button` に勝つ。 */
+  #umeboshi-ask-settings-modal .umeboshi-ask-menurow {
+    display: flex; width: 100%; box-sizing: border-box;
+    min-height: 3.2rem;
+    align-items: center; gap: .5rem; text-align: left;
+    background: var(--ask-bg); color: var(--ask-fg);
+    border: 1px solid var(--ask-border); border-radius: .5rem;
+    padding: .5rem .65rem; margin-bottom: .4rem; cursor: pointer; font-size: .87rem;
+    box-shadow: none;
+  }
+  #umeboshi-ask-settings-modal .umeboshi-ask-menurow:hover { border-color: var(--ask-accent); background: var(--ask-hover); }
+  #umeboshi-ask-settings-modal .umeboshi-ask-menurow .t { flex: 1; min-width: 0; }
+  #umeboshi-ask-settings-modal .umeboshi-ask-menurow .t small { display: block; color: var(--ask-muted); font-size: .75rem; }
+  .umeboshi-ask-menurow .chev { color: var(--ask-muted); flex: none; }
+  .umeboshi-ask-menurow.add { border-style: dashed; color: var(--ask-accent); }
+  #umeboshi-ask-detailbar {
+    display: flex; align-items: center; gap: .5rem;
+    padding-bottom: .2rem; border-bottom: 1px solid var(--ask-border);
+  }
+  #umeboshi-ask-detailbar[hidden] { display: none; }
+  #umeboshi-ask-detailbar b { flex: 1; font-size: .9rem; }
+  /* 詳細に戻る＋項目内ボタンを同一スタイルに統一 */
+  #umeboshi-ask-detail-back, .umeboshi-ask-item button {
+    background: var(--ask-bg); color: var(--ask-fg);
+    border: 1px solid var(--ask-border); border-radius: .4rem;
+    padding: .25rem .55rem; font-size: .82rem; cursor: pointer;
+    /* #82 Anki の `.fancy button` が box-shadow を足すので、flat 意図を明示する。 */
+    box-shadow: none;
+  }
+  #umeboshi-ask-detail-back { flex: none; }
+  #umeboshi-ask-detail-back:hover, .umeboshi-ask-item button:hover { border-color: var(--ask-accent); background: var(--ask-hover); }
+  #umeboshi-ask-results[hidden] { display: none; }
+  .umeboshi-ask-item {
+    border: 1px solid var(--ask-border); border-radius: .5rem; padding: .55rem;
+    display: flex; flex-direction: column; gap: .35rem;
+  }
+  .umeboshi-ask-item-title { font-weight: bold; }
+  .umeboshi-ask-item label { display: block; font-size: .85rem; }
+  .umeboshi-ask-item input[type="text"], .umeboshi-ask-item textarea {
+    width: 100%; box-sizing: border-box; padding: .3rem .45rem;
+    border: 1px solid var(--ask-border); border-radius: .35rem;
+    background: var(--ask-bg); color: var(--ask-fg); font-size: .85rem;
+  }
+  /* プロンプト本文は縦に伸ばす。上限50vhで小画面の崩れを担保 */
+  .umeboshi-ask-item textarea { min-height: 12rem; max-height: 50vh; resize: vertical; }
+  .umeboshi-ask-hit { outline: 2px solid var(--ask-accent); background: var(--ask-hit-bg); }
+  .umeboshi-ask-note { color: var(--ask-muted); font-size: .8rem; margin: 0; }
+  #umeboshi-ask-addon-link { font-size: .8rem; }
+  .umeboshi-ask-row { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+  .umeboshi-ask-foot {
+    display: flex; gap: .5rem; align-items: center;
+    padding: .55rem .7rem; border-top: 1px solid var(--ask-border);
+    font-size: .75rem; color: var(--ask-muted);
+  }
+</style>
+
+<!-- umeboshi-ask:panel-version 1.4.2 -->
+<div id="umeboshi-ask" data-theme="light">
+  <div id="umeboshi-ask-cardid-banner" hidden>
+  未対応のAnkiです：CardIDが取得できないため保存はできません。Anki 25.09.2+ / AnkiDroid 2.24.1+ / AnkiWebで開いてください。
+  </div>
+  <div id="umeboshi-ask-storage-banner" role="status" aria-live="polite" hidden></div>
+  <div id="umeboshi-ask-thread" hidden>
+    <div id="umeboshi-ask-thread-title">保存済み解説</div>
+    <div id="umeboshi-ask-thread-list"></div>
+    <div id="umeboshi-ask-thread-status" class="umeboshi-ask-thread-status" aria-live="polite"></div>
+  </div>
+  <div id="umeboshi-ask-compose">
+    <div id="umeboshi-ask-messages" aria-live="polite"></div>
+    <div id="umeboshi-ask-current" hidden>
+      <div id="umeboshi-ask-stream-q" aria-live="polite"></div>
+      <details id="umeboshi-ask-thinking" hidden>
+        <summary>thinking</summary>
+        <div id="umeboshi-ask-thinking-body"></div>
+      </details>
+      <div id="umeboshi-ask-answer" aria-live="polite"></div>
+      <div id="umeboshi-ask-stream-status" aria-live="polite"></div>
+    </div>
+    <div id="umeboshi-ask-controls">
+    <div id="umeboshi-ask-buttons">
+      <button type="button" data-ask="why">Why?</button>
+      <button type="button" data-ask="what">What?</button>
+      <button type="button" data-ask="significance">Significance?</button>
+      <button type="button" data-ask="origin">Origin?</button>
+      <button type="button" data-ask="eli5">ELI5</button>
+    </div>
+  <div id="umeboshi-ask-input-row">
+    <textarea id="umeboshi-ask-input" rows="2" placeholder="質問を入力"></textarea>
+  </div>
+  <div id="umeboshi-ask-send-hint">Enterで改行・Ctrl/Cmd+Enterで送信</div>
+  <div class="umeboshi-ask-fallback-note" id="umeboshi-ask-ankidroid-kb-hint" hidden></div>
+  <!-- umeboshi-ask:module:markup:notice begin -->
+  <!-- umeboshi-ask:module:markup:notice end -->
+  <div class="umeboshi-ask-row" id="umeboshi-ask-model-row">
+    <span id="umeboshi-ask-model-label">モデル</span>
+    <button type="button" id="umeboshi-ask-model" aria-haspopup="dialog" aria-expanded="false" aria-label="モデル選択" disabled>モデル一覧を取得中…</button>
+    <button type="button" id="umeboshi-ask-send-btn">送信</button>
+  </div>
+  <div id="umeboshi-ask-models-status" aria-live="polite"></div>
+  <div id="umeboshi-ask-auth">
+    <button type="button" id="umeboshi-ask-settings-btn" title="設定">⚙</button>
+    <!-- umeboshi-ask:module:markup:auth begin -->
+    <!-- umeboshi-ask:module:markup:auth end -->
+  </div>
+  </div>
+  <div hidden>
+    <button type="button" id="umeboshi-ask-save-btn" disabled title="保存はMessage単位のボタンを使用">保存</button>
+  </div>
+  </div>
+  <div id="umeboshi-ask-model-popup" hidden>
+    <div id="umeboshi-ask-model-backdrop"></div>
+    <div id="umeboshi-ask-model-sheet" role="dialog" aria-modal="true" aria-label="モデル選択">
+      <div id="umeboshi-ask-model-sheet-head">
+        <!-- #198 back to the tier sheet (arrow_back, Material Symbols Outlined). -->
+        <button type="button" id="umeboshi-ask-model-back" aria-label="4段階に戻る"><svg class="umeboshi-ask-back-svg" viewBox="0 -960 960 960" aria-hidden="true" focusable="false"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"/></svg></button>
+        <b id="umeboshi-ask-model-sheet-title">モデル選択</b>
+        <button type="button" id="umeboshi-ask-model-close" aria-label="閉じる">✕</button>
+      </div>
+      <div id="umeboshi-ask-model-list" role="listbox" aria-label="モデル選択"></div>
+    </div>
+  </div>
+  <!-- #198 4段階（ModelTier）選択。モデルボタンからここを開き、下部の詳細モデル選択で
+       従来のモデル一覧（#47）へ渡す。級は Worker の presets が正。 -->
+  <div id="umeboshi-ask-tier-popup" hidden>
+    <div id="umeboshi-ask-tier-backdrop"></div>
+    <div id="umeboshi-ask-tier-sheet" role="dialog" aria-modal="true" aria-label="4段階モデル選択">
+      <div id="umeboshi-ask-tier-sheet-head">
+        <b id="umeboshi-ask-tier-sheet-title">4段階モデル選択</b>
+        <button type="button" id="umeboshi-ask-tier-close" aria-label="閉じる">✕</button>
+      </div>
+      <div id="umeboshi-ask-tier-list" role="listbox" aria-label="4段階モデル選択"></div>
+      <div id="umeboshi-ask-tier-foot">
+        <button type="button" id="umeboshi-ask-tier-detail-btn">詳細モデル選択</button>
+      </div>
+    </div>
+  </div>
+  <div id="umeboshi-ask-effort-popup" hidden>
+    <div id="umeboshi-ask-effort-backdrop"></div>
+    <div id="umeboshi-ask-effort-sheet" role="dialog" aria-modal="true" aria-label="Effort選択">
+      <div id="umeboshi-ask-effort-sheet-head">
+        <!-- #198 back to the model list (arrow_back). The ✕ closes every sheet. -->
+        <button type="button" id="umeboshi-ask-effort-back" aria-label="モデル選択に戻る"><svg class="umeboshi-ask-back-svg" viewBox="0 -960 960 960" aria-hidden="true" focusable="false"><path d="m313-440 224 224-57 56-320-320 320-320 57 56-224 224h487v80H313Z"/></svg></button>
+        <b id="umeboshi-ask-effort-sheet-title">Effort選択</b>
+        <button type="button" id="umeboshi-ask-effort-close" aria-label="閉じる">✕</button>
+      </div>
+      <div id="umeboshi-ask-effort-note" class="umeboshi-ask-note"></div>
+      <div id="umeboshi-ask-effort-list" role="listbox" aria-label="Effort選択"></div>
+    </div>
+  </div>
+  <!-- #250 Copy URL の手運び導線（外部ページのURL）。モデルpopupと
+       同じ button＋fixed層。文字は開く瞬間に表示言語から引く（login / その他の外部ページ）。
+       静的HTMLに日本語を置かないのは #134 のゲート（英語UIに日本語を残さない）のため。 -->
+  <div id="umeboshi-ask-url-popup" hidden>
+    <div id="umeboshi-ask-url-backdrop"></div>
+    <div id="umeboshi-ask-url-sheet" role="dialog" aria-modal="true">
+      <div id="umeboshi-ask-url-sheet-head">
+        <b id="umeboshi-ask-url-title"></b>
+        <button type="button" id="umeboshi-ask-url-close" aria-label="閉じる">✕</button>
+      </div>
+      <div class="umeboshi-ask-fallback-note" id="umeboshi-ask-url-note"></div>
+      <input id="umeboshi-ask-url-input" class="umeboshi-ask-url-input" type="text" readonly spellcheck="false">
+      <div class="umeboshi-ask-row">
+        <button type="button" id="umeboshi-ask-url-copy" class="umeboshi-ask-copy-btn"></button>
+        <span class="umeboshi-ask-fallback-note" id="umeboshi-ask-url-copy-status" aria-live="polite"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- umeboshi-ask:module:markup:consent begin -->
+<!-- umeboshi-ask:module:markup:consent end -->
+
+<div id="umeboshi-ask-settings-modal" hidden>
+  <div class="umeboshi-ask-drawer" id="umeboshi-ask-drawer" role="dialog" aria-modal="true" aria-labelledby="umeboshi-ask-settings-title">
+    <div class="umeboshi-ask-head">
+      <h3 id="umeboshi-ask-settings-title">設定</h3>
+      <button type="button" id="umeboshi-ask-settings-close" aria-label="設定を閉じる">✕</button>
+    </div>
+    <div class="umeboshi-ask-search">
+      <div class="umeboshi-ask-searchrow">
+        <input id="umeboshi-ask-settings-search" type="search" autocomplete="off"
+          placeholder="設定を検索（例: プロンプト、言語）" aria-label="設定を検索">
+        <button type="button" id="umeboshi-ask-search-clear" aria-label="検索をクリア" hidden>✕</button>
+      </div>
+      <div id="umeboshi-ask-search-hint" aria-live="polite"></div>
+    </div>
+    <div class="umeboshi-ask-tabs" role="tablist" aria-label="設定タブ" id="umeboshi-ask-settings-tabs">
+      <button type="button" class="umeboshi-ask-tab active" role="tab" aria-selected="true" data-tab="general">一般<span class="umeboshi-ask-tab-count"></span></button>
+      <button type="button" class="umeboshi-ask-tab" role="tab" aria-selected="false" data-tab="prompts">プロンプト編集<span class="umeboshi-ask-tab-count"></span></button>
+      <button type="button" class="umeboshi-ask-tab" role="tab" aria-selected="false" data-tab="lang">言語<span class="umeboshi-ask-tab-count"></span></button>
+      <button type="button" class="umeboshi-ask-tab" role="tab" aria-selected="false" data-tab="account">アカウント<span class="umeboshi-ask-tab-count"></span></button>
+      <!-- umeboshi-ask:module:markup:tabs begin -->
+      <!-- umeboshi-ask:module:markup:tabs end -->
+    </div>
+    <div class="umeboshi-ask-body" id="umeboshi-ask-settings-body">
+      <div id="umeboshi-ask-detailbar" hidden>
+        <button type="button" id="umeboshi-ask-detail-back">← <span id="umeboshi-ask-detail-src"></span></button>
+        <b id="umeboshi-ask-detail-title"></b>
+      </div>
+      <div id="umeboshi-ask-results" hidden></div>
+      <div class="umeboshi-ask-panel menu-mode" data-panel="general" role="tabpanel">
+        <div class="umeboshi-ask-menu" data-menu="general"></div>
+        <div class="umeboshi-ask-item" data-title="送信モード" data-subkey="sendmode" data-search="送信モード ボタン送信 エンター送信 Enter 改行 Ctrl Cmd send mode">
+          <div class="umeboshi-ask-item-title" id="umeboshi-ask-title-sendmode">送信モード</div>
+          <label><input type="radio" name="umeboshi-ask-sendmode" value="button"> <span id="umeboshi-ask-sendmode-button">ボタン送信（Enterで改行・Ctrl/Cmd+Enterで送信）</span></label>
+          <label><input type="radio" name="umeboshi-ask-sendmode" value="enter"> <span id="umeboshi-ask-sendmode-enter">エンター送信（Enterで送信・Shift+Enterで改行）</span></label>
+        </div>
+        <div class="umeboshi-ask-item" data-title="接続先Worker" data-subkey="workerurl" data-search="Worker URL 接続先 自分 デプロイ 自己ホスト worker url endpoint つなぐ">
+          <div class="umeboshi-ask-item-title" id="umeboshi-ask-title-workerurl">接続先Worker</div>
+          <input type="text" id="umeboshi-ask-worker-url" spellcheck="false" autocomplete="off" placeholder="https://…">
+          <p class="umeboshi-ask-note" id="umeboshi-ask-worker-url-note"></p>
+        </div>
+        <div class="umeboshi-ask-item" data-title="アクセストークン" data-subkey="workertoken" data-search="アクセストークン トークン token 自分 デプロイ 自己ホスト bearer 鍵">
+          <div class="umeboshi-ask-item-title" id="umeboshi-ask-title-workertoken">アクセストークン</div>
+          <input type="text" id="umeboshi-ask-worker-token" spellcheck="false" autocomplete="off">
+          <p class="umeboshi-ask-note" id="umeboshi-ask-worker-token-note"></p>
+        </div>
+        <!-- umeboshi-ask:module:markup:consent-item begin -->
+        <!-- umeboshi-ask:module:markup:consent-item end -->
+        <div class="umeboshi-ask-item" data-title="リセット" data-search="デフォルトプロンプトに戻す リセット 初期化 reset">
+          <div class="umeboshi-ask-item-title" id="umeboshi-ask-title-reset">リセット</div>
+          <div class="umeboshi-ask-row">
+            <button type="button" id="umeboshi-ask-reset-prompts">デフォルトプロンプトに戻す</button>
+            <button type="button" id="umeboshi-ask-reset-all">全設定を初期化</button>
+          </div>
+        </div>
+      </div>
+      <div class="umeboshi-ask-panel menu-mode" data-panel="prompts" role="tabpanel" hidden>
+        <p class="umeboshi-ask-note" id="umeboshi-ask-prompts-note">各ボタンのラベルと送信プロンプトを編集できます。{text} {clozeInfo} {extra} {question} は送信時に置換されます。編集内容は再起動後も保持されます。</p>
+        <div class="umeboshi-ask-menu" data-menu="prompts"></div>
+        <div id="umeboshi-ask-prompt-list"></div>
+        <div id="umeboshi-ask-custom-list"></div>
+      </div>
+      <div class="umeboshi-ask-panel menu-mode" data-panel="lang" role="tabpanel" hidden>
+        <div class="umeboshi-ask-menu" data-menu="lang"></div>
+        <div class="umeboshi-ask-item" data-title="言語" data-subkey="lang" data-search="言語 language 明示 上書き 自動取得 自動判定 ja en">
+          <div class="umeboshi-ask-item-title" id="umeboshi-ask-title-lang">言語</div>
+          <label><input type="radio" name="umeboshi-ask-lang" value="auto"> <span id="umeboshi-ask-lang-radio-auto">自動判定</span></label>
+          <label><input type="radio" name="umeboshi-ask-lang" value="ja"> <span id="umeboshi-ask-lang-radio-ja">日本語</span></label>
+          <label><input type="radio" name="umeboshi-ask-lang" value="en"> <span id="umeboshi-ask-lang-radio-en">English</span></label>
+          <div id="umeboshi-ask-lang-status"></div>
+        </div>
+      </div>
+      <div class="umeboshi-ask-panel menu-mode" data-panel="account" role="tabpanel" hidden>
+        <div class="umeboshi-ask-menu" data-menu="account"></div>
+        <!-- umeboshi-ask:module:markup:account-item begin -->
+        <!-- umeboshi-ask:module:markup:account-item end -->
+        <div class="umeboshi-ask-item" data-title="設定の移行（別端末）" data-search="設定 エクスポート インポート 移行 別端末 export import">
+          <div class="umeboshi-ask-item-title" id="umeboshi-ask-title-migrate">設定の移行（別端末）</div>
+          <div class="umeboshi-ask-row">
+            <button type="button" id="umeboshi-ask-export-btn" hidden>設定をエクスポート</button>
+            <button type="button" id="umeboshi-ask-import-btn" hidden>設定をインポート</button>
+          </div>
+          <div id="umeboshi-ask-migrate-status" aria-live="polite"></div>
+          <!-- umeboshi-ask:module:markup:migrate-hint begin -->
+          <!-- umeboshi-ask:module:markup:migrate-hint end -->
+        </div>
+      </div>
+      <!-- umeboshi-ask:module:markup:panel begin -->
+      <!-- umeboshi-ask:module:markup:panel end -->
+    </div>
+    <div class="umeboshi-ask-foot">
+      <span>MIT License — <a href="https://github.com/Karimuto/umeboshi-ask">Karimuto/umeboshi-ask</a></span>
+    </div>
+  </div>
+</div>
+
+<span id="umeboshi-ask-card-id" style="display:none">{{CardID}}</span>
+
+<script>
+(function() {
+  "use strict";
+  var root = (typeof window !== "undefined") ? window : {};
+  var SETTINGS_KEY = "umeboshi-ask:settings:v1";
+  /* #256 OS2b: 自己ホスト Worker への接続情報。設定JSON（SETTINGS_KEY）には
+     載せない。トークンをサーバーへ送らないため（export/import の対象外）。
+     別端末へは手で貼り直す。空欄なら既定の公式 Worker に戻る。 */
+  var WORKER_URL_KEY = "umeboshi-ask:worker-url:v1";
+  var WORKER_TOKEN_KEY = "umeboshi-ask:worker-token:v1";
+  var DEFAULT_API_BASE = "https://umeboshi-ask.umeboshi-ask.workers.dev";
+  /* OS5a: credit タブは module が script シームで TAB_ORDER に足す。 */
+  var TAB_ORDER = ["general", "prompts", "lang", "account"];
+  var DEFAULT_KEYS = ["why", "what", "significance", "origin", "eli5"];
+
+  function byId(id) {
+    if (typeof document === "undefined" || !document.getElementById) return null;
+    return document.getElementById(id);
+  }
+  function qsa(sel) {
+    if (typeof document === "undefined" || !document.querySelectorAll) return [];
+    return document.querySelectorAll(sel);
+  }
+  function each(list, fn) {
+    for (var i = 0; i < list.length; i++) fn(list[i], i);
+  }
+  function trim(s) { return (s || "").replace(/^\s+|\s+$/g, ""); }
+
+  function storeArea() {
+    try { if (root && root.localStorage) return root.localStorage; } catch (e) {}
+    try { if (typeof window !== "undefined" && window.localStorage) return window.localStorage; } catch (e2) {}
+    return null;
+  }
+  function storeGet(key) {
+    try {
+      var ls = storeArea();
+      if (!ls) return null;
+      return ls.getItem(key);
+    } catch (e) { return null; }
+  }
+  function storeSet(key, value) {
+    try {
+      var ls = storeArea();
+      if (!ls) return false;
+      ls.setItem(key, value);
+      return true;
+    } catch (e) { return false; }
+  }
+  function storeDel(key) {
+    try {
+      var ls = storeArea();
+      if (!ls) return false;
+      ls.removeItem(key);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /* ---------- #127 origin 変更検知（localStorage はポートで分割、Cookie は分割しない） ---------- */
+  /* AnkiDroid は origin = http://127.0.0.1:<port>/ を Deck ごとに作り直すため、ポートが変わると
+     localStorage は別オリジン＝毎回空になる（domStorageEnabled は常に true なので例外は出ない）。
+     RFC 6265 §5.3「cookies for a given host are shared across all the ports on that host」により
+     Cookie だけはポートを跨いで残る。この非対称を使うと、リセットを「推測」ではなく証明できる。
+     判定専用。認証情報はこの Cookie に載せない（Q3=a）。 */
+  var ORIGIN_COOKIE = "ask_origin";
+  function cookiePort() {
+    try {
+      var doc = root.document;
+      if (!doc || typeof doc.cookie !== "string") return null;
+      var m = /(?:^|;\s*)ask_origin=(\d*)/.exec(doc.cookie);
+      return m ? m[1] : null;
+    } catch (e) { return null; }
+  }
+  function currentPort() {
+    try {
+      var loc = root.location;
+      return loc && typeof loc.port === "string" ? loc.port : null;
+    } catch (e2) { return null; }
+  }
+  /* max-age 必須: セッション Cookie は WebView プロセス死で消え、Detection するバグを再現してしまう。 */
+  function markPort() {
+    try {
+      var doc = root.document;
+      var p = currentPort();
+      if (!doc || !p) return;
+      doc.cookie = ORIGIN_COOKIE + "=" + p + ";path=/;max-age=31536000;SameSite=Lax";
+    } catch (e) {}
+  }
+  /* 証明ロジック。偽陽性は論理的に成立しない:
+     誤検出には「Cookie が残った」＋「前回 localStorage への書込みが成功」＋「同一オリジンなのに
+     今の localStorage が空」の3つが同時に要るが、同一オリジンなら前回書いた器が今の器そのものなので
+     空にはならない。ポート再利用は誤検出ではなく「警告が出ない」= 現状の退化側にしか倒れない。 */
+  function storageWasReset() {
+    try {
+      var prev = cookiePort();
+      var cur = currentPort();
+      if (prev === null || cur === null) return false;   /* 初回起動は比較対象が無い＝断定しない */
+      if (prev === cur) return false;                    /* 同一ポート＝固定設定済み or 偶然再採番 */
+      if (storeGet(SETTINGS_KEY)) return false;           /* localStorage が生きていれば origin 判定は棄却 */
+      return true;
+    } catch (e3) { return false; }
+  }
+
+  /* ---------- S7: 設定ストア（localStorage永続化・再起動後も保持） ---------- */
+  /* #42 言語方針（日英のみ）: 日本語ハードコードをLOCALESに集約。uiText(det.lang)で引く。 */
+  var LOCALES = {
+    ja: {
+      why: "なぜ?", what: "なに?", significance: "重要性?", origin: "語源?", eli5: "5歳にもわかるように",
+      send: "送信", search: "設定を検索（例: プロンプト、言語）", askPh: "質問を入力",
+      ankiDroidKbHint: "キーボードが出ない？ → 設定で「答えを入力する欄をカード内に表示」をON → 再起動",
+      storageReset: "Deckを切り替えるとログインと設定が消えます："
+        + "AnkiDroidの設定 → 高度な設定 → 不具合回避策 →"
+        + "「JavaScriptのlocalStorageを有効にする」をONにしてください。",
+      settingsTitle: "設定", settingsClose: "設定を閉じる", settingsSearchLabel: "設定を検索",
+      settingsClear: "検索をクリア", settingsTabs: "設定タブ",
+      tabGeneral: "一般", tabPrompts: "プロンプト編集", tabLang: "言語", tabAccount: "アカウント",
+      langTitle: "言語", langAuto: "自動判定", langJa: "日本語", langEn: "English",
+      langStatus: "表示言語: ", langSource: "取得元: ", langFallbackHint: " — 言語設定が見つかりません。明示設定してください。",
+      /* #130 括弧・区切り・検索の語法。データ由来の表示もUI言語に追従させる。 */
+      punctOpen: "（", punctClose: "）", punctDot: "・", searchQuote: "「」", countIn: "に __N__件", punctStop: "。",
+      srcExplicit: "明示設定", srcDesktop: "Anki Desktop", srcDroid: "AnkiDroid", srcNavigator: "navigator", srcFallback: "検出不可", navigator: "navigator",
+      sendModeTitle: "送信モード", sendModeButton: "ボタン送信（Enterで改行・Ctrl/Cmd+Enterで送信）", sendModeEnter: "エンター送信（Enterで送信・Shift+Enterで改行）",
+      sendModeButtonShort: "ボタン送信", sendModeEnterShort: "エンター送信",
+      sendHintButton: "Enterで改行・Ctrl/Cmd+Enterで送信", sendHintEnter: "Enterで送信・Shift+Enterで改行",
+      /* #256 OS2b 自己ホスト導線。トークンは端末内のみ（サーバーへ送らない）。 */
+      workerUrlTitle: "接続先Worker", workerUrlNote: "自分でデプロイしたWorkerのURLを貼ると、質問と保存がそのWorkerに届きます。空欄なら公式Workerを使います。URLはhttpsではじまる形だけ受け付けます。",
+      workerTokenTitle: "アクセストークン", workerTokenNote: "接続先Workerに設定したアクセストークン（ASK_TOKEN）を貼ると、解答を自分のWorkerに保存できます。空欄なら保存はこの端末内だけに行います。この値は端末内にのみ残り、サーバーへは送られません。",
+      workerUrlInvalid: "URLの形が正しくないため、既定の公式Workerに戻しました。",
+      workerTokenSaved: "アクセストークンを保存しました。",
+      workerUrlOfficial: "公式Worker", workerUrlCustom: "自分のWorker",
+      workerTokenSet: "設定済み", workerTokenUnset: "未設定",
+      workerTokenInvalid: "設定のアクセストークンを確認してください。接続先Workerに設定したASK_TOKENと一致していません。",
+      resetTitle: "リセット", resetPrompts: "デフォルトプロンプトに戻す", resetAll: "全設定を初期化",
+      promptsNote: "各ボタンのラベルと送信プロンプトを編集できます。{text} {clozeInfo} {extra} {question} は送信時に置換されます。編集内容は再起動後も保持されます。",
+      promptOf: "のプロンプト", promptBody: "プロンプト本文", promptLabel: "ラベル（空なら言語既定）", promptReset: "デフォルトに戻す",
+      customName: "カスタム質問", customAdd: "＋ カスタム質問を追加", customNoLimit: "上限なし", customDelete: "削除",
+      customLabelAria: "カスタム質問のラベル", customBodyAria: "カスタム質問のプロンプト本文",
+      migrateTitle: "設定の移行（別端末）", migrateExport: "設定をエクスポート", migrateImport: "設定をインポート",
+      modelLabel: "モデル", modelAria: "モデル選択", modelsLoading: "モデル一覧を取得中…", modelClose: "閉じる",
+      modelsAvailable: "件のモデルが利用可能", modelsFailOption: "モデル一覧を取得できませんでした",
+      modelsFail: "モデル一覧を取得できませんでした（Worker未デプロイ時は無視）", modelsFailFetch: "モデル一覧を取得できませんでした（この環境ではfetch不可）",
+      modelSwitched: "モデルを切り替えました",
+      /* #198 4段階（ModelTier）の級名・入口・未計測。級名は site/ のモデル区分と同じ語。 */
+      tierTitle: "4段階モデル選択", tierAria: "4段階モデル選択",
+      tierBasic: "ベーシック", tierMiddle: "ミドル", tierPremium: "プレミアム", tierUltra: "ウルトラ", tierCustom: "Custom",
+      tierDetail: "詳細モデル選択", tierEmpty: "4段階の選択はまだ使えません", modelBack: "4段階に戻る", effortBack: "モデル選択に戻る",
+      scoreUnknown: "—", scoreUnknownAria: "頭よさそうスコアは未計測",
+      /* #198 目安クレジットは選ぶ画面に出さない（human 決定）。強さだけを見せる。
+         #132 の読み上げ用ラベルは残す。 */
+      smartScoreAria: "頭よさそうスコア ",
+      effortLabel: "Effort", effortAria: "Effort選択", effortClose: "閉じる",
+      effortAuto: "自動", effortNote: "高 effort は消費が増えることがあります",
+      effortInvalid: "このモデルでは選べないEffortです。選び直してください",
+      threadTitle: "保存済み解説", threadEmpty: "保存済みMessageはまだありません。気に入った回答の保存ボタンで残せます。",
+      /* #131 Thread見出しの空質問文言。括弧込みで言語ごとに持つ。 */
+      threadNoQ: "（質問なし）",
+      stop: "停止", statusDone: "", statusError: "エラー: ", statusThinking: "生成中…", statusAborted: "中断しました",
+      statusInterrupted: "中断しました（未保存）。保存ボタンで残せます。",
+      statusTruncated: "回答が出力上限に達して途中で切れました。effortを下げるか、質問を短くして試してください。",
+      statusEmptyAnswer: "回答が空でした。モデルの出力が途中で止まったようです。もう一度送るか、effortやモデルを変えて試してください。",
+      cardBanner: "未対応のAnkiです：CardIDが取得できないため保存はできません。Anki 25.09.2+ / AnkiDroid 2.24.1+ / AnkiWebで開いてください。",
+      cardBannerShort: "CardID未対応のため保存できません",
+      iconSend: "M2.01 21L23 12 2.01 3 2 10l15 2-15 2z", iconStop: "M6 6h12v12H6z", iconSave: "M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z", iconSettings: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41L9.25 5.35c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.03-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z", iconEdit: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z", iconDelete: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z",
+      threadQ: "質問", threadA: "回答", threadSave: "保存", threadCancel: "キャンセル",
+      threadEdit: "編集", threadDelete: "削除",
+      /* umeboshi-ask:module:i18n:ja begin */
+      /* umeboshi-ask:module:i18n:ja end */
+      threadFull: "このカードの保存は100件までです。不要なMessageを削除してください。",
+      threadEmptyQ: "質問が空のため保存できません。",
+      threadTooLong: "20000文字を超えるため保存できません（質問＋回答の合計）。",
+      threadSaving: "保存しています…", threadLoading: "読み込み中…",
+      threadEditFail: "編集を保存できませんでした。時間をおいて試してください。",
+      threadDeleteConfirm: "このMessageを削除します。元に戻せません。",
+      threadDeleteFail: "削除できませんでした。時間をおいて試してください。",
+      threadSaveFail: "保存できませんでした。時間をおいて試してください。",
+      threadNoCard: "未対応のAnkiです：CardIDが取得できないため保存はできません。",
+      sendFailFetch: "この環境では送信できません（fetch不可）。",
+      sendFailUnknown: "エラー: 未知のモデルのため切り替えました。もう一度送信してください",
+      sendFail: "送信できませんでした (",
+      searchNone: "に一致する設定はありません", searchFound: " 見つかりました", searchResults: "検索結果",
+      itemFallback: "設定", detailBack: "← "
+    },
+    en: {
+      why: "Why?", what: "What?", significance: "Significance?", origin: "Origin?", eli5: "ELI5",
+      send: "Send", search: "Search settings", askPh: "Type a question",
+      ankiDroidKbHint: "No keyboard? → turn ON \"Type answer into the card\" in settings → restart",
+      storageReset: "Signing in and settings are lost when you switch decks: "
+        + "turn ON \"localStorage in Study Screen\" in "
+        + "AnkiDroid Settings → Advanced → Workarounds.",
+      settingsTitle: "Settings", settingsClose: "Close settings", settingsSearchLabel: "Search settings",
+      settingsClear: "Clear search", settingsTabs: "Settings tabs",
+      tabGeneral: "General", tabPrompts: "Edit prompts", tabLang: "Language", tabAccount: "Account",
+      langTitle: "Language", langAuto: "Auto", langJa: "日本語", langEn: "English",
+      langStatus: "Display language: ", langSource: "Source: ", langFallbackHint: " — No language setting found. Choose one explicitly.",
+      /* #130 括弧・区切り・検索の語法。データ由来の表示もUI言語に追従させる。 */
+      punctOpen: " (", punctClose: ")", punctDot: ", ", searchQuote: "\"\"", countIn: " (__N__)", punctStop: ".",
+      srcExplicit: "Manual", srcDesktop: "Anki Desktop", srcDroid: "AnkiDroid", srcNavigator: "navigator", srcFallback: "Unknown", navigator: "navigator",
+      sendModeTitle: "Send mode", sendModeButton: "Button send (Enter for newline, Ctrl/Cmd+Enter to send)", sendModeEnter: "Enter to send (Enter sends, Shift+Enter for newline)",
+      sendModeButtonShort: "Button send", sendModeEnterShort: "Enter to send",
+      sendHintButton: "Enter for newline, Ctrl/Cmd+Enter to send", sendHintEnter: "Enter to send, Shift+Enter for newline",
+      /* #256 OS2b self-host wiring. The token stays on this device (never sent to the server). */
+      workerUrlTitle: "Worker endpoint", workerUrlNote: "Paste the URL of a Worker you deployed yourself and questions and saves go there. Empty uses the official Worker. Only http(s) URLs are accepted.",
+      workerTokenTitle: "Access token", workerTokenNote: "Paste the access token (ASK_TOKEN) set on that Worker to save answers to your own Worker. Empty keeps saves on this device only. This value stays on this device and is never sent to the server.",
+      workerUrlInvalid: "That URL is not valid, so the official Worker is back in use.",
+      workerTokenSaved: "Access token saved.",
+      workerUrlOfficial: "Official Worker", workerUrlCustom: "Your Worker",
+      workerTokenSet: "Set", workerTokenUnset: "Not set",
+      workerTokenInvalid: "Check the access token in settings. It does not match the ASK_TOKEN set on that Worker.",
+      resetTitle: "Reset", resetPrompts: "Restore default prompts", resetAll: "Reset all settings",
+      promptsNote: "Edit each button label and prompt. {text} {clozeInfo} {extra} {question} are replaced on send. Edits persist across restarts.",
+      promptOf: " prompt", promptBody: "Prompt body", promptLabel: "Label (empty = language default)", promptReset: "Restore default",
+      customName: "Custom question", customAdd: "+ Add custom question", customNoLimit: "No limit", customDelete: "Delete",
+      customLabelAria: "Custom question label", customBodyAria: "Custom question prompt body",
+      migrateTitle: "Move settings (other device)", migrateExport: "Export settings", migrateImport: "Import settings",
+      modelLabel: "Model", modelAria: "Choose model", modelsLoading: "Loading models…", modelClose: "Close",
+      modelsAvailable: " models available", modelsFailOption: "Could not load models",
+      modelsFail: "Could not load models (ignored when Worker is not deployed)", modelsFailFetch: "Could not load models (fetch unavailable here)",
+      modelSwitched: "Switched model",
+      /* #198 4段階（ModelTier）の級名・入口・未計測。級名は site/en のモデル区分と同じ語。 */
+      tierTitle: "Choose by tier", tierAria: "Choose by tier",
+      tierBasic: "Basic", tierMiddle: "Middle", tierPremium: "Premium", tierUltra: "Ultra", tierCustom: "Custom",
+      tierDetail: "Detailed model choice", tierEmpty: "Choosing by tier is not available yet", modelBack: "Back to tiers", effortBack: "Back to models",
+      scoreUnknown: "—", scoreUnknownAria: "Smart score not measured",
+      /* #198 目安クレジットは選ぶ画面に出さない（human 決定）。強さだけを見せる。
+         #132 の読み上げ用ラベルは残す。 */
+      smartScoreAria: "Smart score ",
+      effortLabel: "Effort", effortAria: "Choose effort", effortClose: "Close",
+      effortAuto: "Auto", effortNote: "Higher effort may cost more",
+      effortInvalid: "This effort is not available for this model. Please choose again",
+      threadTitle: "Saved Notes", threadEmpty: "No saved Messages yet. Save a good answer to keep it.",
+      /* #131 Thread見出しの空質問文言。括弧込みで言語ごとに持つ。 */
+      threadNoQ: "(no question)",
+      stop: "Stop", statusDone: "", statusError: "Error: ", statusThinking: "Generating…", statusAborted: "Aborted",
+      statusInterrupted: "Interrupted (unsaved). Save it with the save button.",
+      statusTruncated: "The answer hit the output limit and was cut off. Try a lower effort or a shorter question.",
+      statusEmptyAnswer: "The answer came back empty; the model stopped mid-output. Send again, or try a different effort or model.",
+      cardBanner: "Unsupported Anki: cannot save without CardID. Use Anki 25.09.2+ / AnkiDroid 2.24.1+ / AnkiWeb.",
+      cardBannerShort: "Cannot save: CardID unsupported",
+      iconSend: "M2.01 21L23 12 2.01 3 2 10l15 2-15 2z", iconStop: "M6 6h12v12H6z", iconSave: "M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z", iconSettings: "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94L14.4 2.81c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41L9.25 5.35c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.03-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z", iconEdit: "M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z", iconDelete: "M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z",
+      threadQ: "Question", threadA: "Answer", threadSave: "Save", threadCancel: "Cancel",
+      threadEdit: "Edit", threadDelete: "Delete",
+      /* umeboshi-ask:module:i18n:en begin */
+      /* umeboshi-ask:module:i18n:en end */
+      threadFull: "Up to 100 saves per card. Delete unneeded Messages.",
+      threadEmptyQ: "Cannot save: question is empty.",
+      threadTooLong: "Cannot save over 20000 chars (question + answer).",
+      threadSaving: "Saving…", threadLoading: "Loading…",
+      threadEditFail: "Could not save the edit. Try again later.",
+      threadDeleteConfirm: "Delete this Message. Cannot be undone.",
+      threadDeleteFail: "Could not delete. Try again later.",
+      threadSaveFail: "Could not save. Try again later.",
+      threadNoCard: "Unsupported Anki: cannot save without CardID.",
+      sendFailFetch: "Cannot send here (fetch unavailable).",
+      sendFailUnknown: "Error: switched from an unknown model. Please send again",
+      sendFail: "Failed to send (",
+      searchNone: " — no matching settings", searchFound: " found", searchResults: "Search results",
+      itemFallback: "Settings", detailBack: "← "
+    }
+  };
+  var DEFAULT_PROMPTS = {
+    why: "「{question}」について、カード文脈を踏まえて原因・根拠・背景を説明してください。専門用語は初出時に（ ）で短く補足してください。簡潔に、読むのが簡単な量で、15〜30秒以内に読めるように書いてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}",
+    what: "「{question}」について、カード文脈を踏まえて簡潔に定義してください。専門用語は初出時に（ ）で短く補足してください。簡潔に、読むのが簡単な量で、15〜30秒以内に読めるように書いてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}",
+    significance: "「{question}」の重要度・臨床的意義を、カード文脈を踏まえて説明してください。「なぜ覚えるのか」が伝わるように書いてください。簡潔に、読むのが簡単な量で、15〜30秒以内に読めるように書いてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}",
+    origin: "「{question}」の語源・由来を、その言葉の実際の出所に沿って説明してください。語源を知れば意味が推測できることをゴールにしてください。簡潔に、読むのが簡単な量で、15〜30秒以内に読めるように書いてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}",
+    eli5: "「{question}」について、5歳の子どもにもわかるように説明してください。たとえ話を多用し、むずかしい言葉には必ず補足を入れてください。簡潔に、読むのが簡単な量で、15〜30秒以内に読めるように書いてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}"
+  };
+  /* #42 Q5/Q10: Prompt Template本文はUI言語に連動。英語5種は日本語構造の1対1書き直し（機械翻訳量産）。差し込み名は変えない。 */
+  var DEFAULT_PROMPTS_EN = {
+    why: "Explain the causes, reasons, and background of \"{question}\" based on the card context. Briefly explain technical terms in ( ) on first use. Keep it short and easy to read within 15-30 seconds.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}",
+    what: "Define \"{question}\" concisely based on the card context. Briefly explain technical terms in ( ) on first use. Keep it short and easy to read within 15-30 seconds.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}",
+    significance: "Explain the importance and clinical significance of \"{question}\" based on the card context. Make clear why it is worth remembering. Keep it short and easy to read within 15-30 seconds.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}",
+    origin: "Explain the etymology and origin of \"{question}\" following its actual source, so the origin helps guess the meaning. Keep it short and easy to read within 15-30 seconds.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}",
+    eli5: "Explain \"{question}\" so a 5-year-old can understand. Use lots of analogies and always explain difficult words. Keep it short and easy to read within 15-30 seconds.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}"
+  };
+  var DEFAULT_PROMPTS_FALLBACK = "About \"{question}\", explain it briefly in an easy-to-read amount within 15-30 seconds.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}";
+  function defaultPromptsFor(lang) { return (lang === "en") ? DEFAULT_PROMPTS_EN : DEFAULT_PROMPTS; }
+
+  function defaultSettings() {
+    /* #42 新規は表示言語の種で初期化。既存の編集済み本文はmergeSettingsが温存する。 */
+    var lang = "ja";
+    try { lang = detectLang({ lang: "auto" }).lang; } catch (e) {}
+    var prompts = {};
+    var src = defaultPromptsFor(lang);
+    each(DEFAULT_KEYS, function(k) { prompts[k] = { label: "", body: src[k] }; });
+    return { version: 1, sendMode: "button", lang: "auto", prompts: prompts, customs: [], efforts: {} };
+  }
+  function mergeSettings(raw) {
+    var d = defaultSettings();
+    if (!raw || typeof raw !== "object") return d;
+    if (raw.sendMode === "enter" || raw.sendMode === "button") d.sendMode = raw.sendMode;
+    if (raw.lang === "auto" || raw.lang === "ja" || raw.lang === "en") d.lang = raw.lang;
+    if (raw.prompts && typeof raw.prompts === "object") {
+      each(DEFAULT_KEYS, function(k) {
+        var p = raw.prompts[k];
+        if (p && typeof p === "object") {
+          if (typeof p.label === "string") d.prompts[k].label = p.label;
+          if (typeof p.body === "string" && p.body !== "") d.prompts[k].body = p.body;
+        }
+      });
+    }
+    if (raw.customs && Object.prototype.toString.call(raw.customs) === "[object Array]") {
+      each(raw.customs, function(c) {
+        if (c && typeof c.id === "string" && typeof c.label === "string" && typeof c.body === "string" && c.body !== "") {
+          d.customs.push({ id: c.id, label: c.label, body: c.body });
+        }
+      });
+    }
+    d.efforts = {};
+    if (raw.efforts && typeof raw.efforts === "object" && Object.prototype.toString.call(raw.efforts) !== "[object Array]") {
+      for (var ek in raw.efforts) {
+        if (!Object.prototype.hasOwnProperty.call(raw.efforts, ek)) continue;
+        var ev = raw.efforts[ek];
+        if (typeof ek === "string" && ek !== "" && typeof ev === "string" && ev !== "") d.efforts[ek] = ev;
+      }
+    }
+    return d;
+  }
+
+  var UmeboshiAskSettings = {
+    key: SETTINGS_KEY,
+    defaults: defaultSettings,
+    load: function() {
+      var raw = storeGet(SETTINGS_KEY);
+      if (!raw) return defaultSettings();
+      try { return mergeSettings(JSON.parse(raw)); } catch (e) { return defaultSettings(); }
+    },
+    save: function(s) { return storeSet(SETTINGS_KEY, JSON.stringify(s)); },
+    get: function(path) {
+      var s = UmeboshiAskSettings.load();
+      var parts = (path || "").split(".");
+      var cur = s;
+      for (var i = 0; i < parts.length; i++) {
+        if (cur === undefined || cur === null) return undefined;
+        cur = cur[parts[i]];
+      }
+      return cur;
+    },
+    // S2用: 質問キー/カスタムID → {label, body}
+    resolvePrompt: function(id) {
+      var s = UmeboshiAskSettings.load();
+      if (s.prompts && s.prompts[id]) return { label: s.prompts[id].label, body: s.prompts[id].body };
+      for (var i = 0; i < s.customs.length; i++) {
+        if (s.customs[i].id === id) return { label: s.customs[i].label, body: s.customs[i].body };
+      }
+      return null;
+    }
+  };
+  root.UmeboshiAskSettings = UmeboshiAskSettings;
+
+  /* ---------- S7: 言語（明示＞Anki Desktop＞AnkiDroid＞navigator＞EN） ---------- */
+  function normalizeLang(tag) {
+    var t = (tag || "").toLowerCase().replace(/_/g, "-");
+    if (t.indexOf("ja") === 0) return "ja";
+    /* #42 日英のみ: es / zh 系入力は将来追加まで en に倒す（検出枝は残す）。 */
+    if (t.indexOf("es") === 0) return "en";
+    if (t.indexOf("zh") === 0) return "en";
+    if (t.indexOf("en") === 0) return "en";
+    return "en";
+  }
+  function detectLang(settings) {
+    var explicit = settings && settings.lang ? settings.lang : "auto";
+    if (explicit === "ja" || explicit === "en") return { lang: explicit, source: "explicit" };
+    /* #42 保存済み es / zh-CN は auto 扱いに寄せる。引数は変えない。 */
+    var auto = (explicit === "auto" || explicit === "es" || explicit === "zh-CN");
+    if (!auto) return { lang: "en", source: "explicit" };
+    try {
+      if (root.ankiPlatformInfo && root.ankiPlatformInfo.language) {
+        return { lang: normalizeLang(root.ankiPlatformInfo.language), source: "anki-desktop" };
+      }
+    } catch (e) {}
+    try {
+      if (root.AnkiDroidJS && root.AnkiDroidJS.getLanguage) {
+        var l = root.AnkiDroidJS.getLanguage();
+        if (l) return { lang: normalizeLang(l), source: "ankidroid" };
+      }
+    } catch (e) {}
+    try {
+      if (root.navigator && root.navigator.language) {
+        return { lang: normalizeLang(root.navigator.language), source: "navigator" };
+      }
+    } catch (e) {}
+    return { lang: "en", source: "fallback" };
+  }
+  function uiText(lang) { return LOCALES[lang] || LOCALES.en; }
+  /* OS5a: module 差し込み口。base は 4 層のシーム（markup・CSS・i18n・script）を
+     空で持ち、host build だけが src/commercial/panel-module.js を埋める。
+     script シームは IIFE の中に置かれるので、module はこの閉包の補助
+     （txNow・byId・copyToClipboard）をそのまま呼べる。 */
+  function addLocaleExtra(extra) {
+    if (!extra) return;
+    for (var lk in extra) {
+      if (!Object.prototype.hasOwnProperty.call(LOCALES, lk)) continue;
+      var tbl = extra[lk];
+      if (!tbl) continue;
+      for (var k in tbl) {
+        if (Object.prototype.hasOwnProperty.call(tbl, k)) LOCALES[lk][k] = tbl[k];
+      }
+    }
+  }
+  /* ---------- 送信ゲート（OS5b #263） ----------
+     同意は module（src/commercial/panel-module.js）が持つ。base は同意を持たない。
+     指令も module も無い endpoint（自己ホスト）は、匿名質問を止めないため即送信。
+     指令がある endpoint（公式）は module の読み込み完了まで送信を待つ。
+     取得の失敗・タイムアウトは fail-open（匿名質問は止めない・無限に待たない）。
+     module が登録した後の判断は待ち続ける。同意ダイアログは人間の操作待ちで、
+     ここを切ると同意なしで送るか、同意後の二重送信になる。
+     runtime の loader が module を取りに行うのは OS9b。ここまでが契約。 */
+  var SEND_GATE_TIMEOUT_MS = 10000;
+  var sendGateWaiter = null;   // module が登録する「送信してよいか」の関数
+  var moduleDirective = false; // 指令: この endpoint は module を配る
+  var moduleReadyWait = null;  // 指令がある endpoint の module 取得待ち
+  var moduleReadyDone = null;
+  function registerSendGate(fn) {
+    if (typeof fn !== "function") return;
+    sendGateWaiter = fn;
+    /* 待っていた送信を解く。 */
+    if (moduleReadyDone) { var done = moduleReadyDone; moduleReadyDone = null; done(); }
+  }
+  function setModuleDirective(on) { moduleDirective = !!on; }
+  /* module 取得の待ち。登録されたら true、上限に達したら false（fail-open）。 */
+  function waitForSendGate() {
+    if (typeof sendGateWaiter === "function") return Promise.resolve(true);
+    if (!moduleReadyWait) {
+      moduleReadyWait = new Promise(function(resolve) {
+        var settled = false;
+        var finish = function(ok) { if (settled) return; settled = true; resolve(ok); };
+        /* module が登録されたら取得完了（true）。上限に達したら取得失敗（false）。 */
+        moduleReadyDone = function() { finish(true); };
+        setTimeout(function() { finish(false); }, sendGateTimeout());
+      });
+    }
+    return moduleReadyWait;
+  }
+  /* 上限。vm ハーネスが root から短くできる（fail-open の検証を速くするため）。 */
+  function sendGateTimeout() {
+    var v = (typeof root !== "undefined" && root) ? root.UmeboshiAskSendGateTimeoutMs : null;
+    return (typeof v === "number" && v > 0) ? v : SEND_GATE_TIMEOUT_MS;
+  }
+  /* 送信前に解く待機条件。null は「待つ物が無い」のでそのまま送る。
+     action = { key, freeText }（module が保留の再送に使う）。 */
+  function awaitSendGate(action) {
+    if (typeof sendGateWaiter !== "function" && !moduleDirective) return null;
+    return waitForSendGate().then(function(ready) {
+      /* module を取得できなかった。匿名質問は止めない（fail-open）。 */
+      if (!ready) return true;
+      return Promise.resolve(sendGateWaiter(action));
+    }).catch(function() { return true; });  // module 側の失敗も fail-open。
+  }
+  /* 送信ゲートを通してから送る。ゲートが無い即送信、同意待ちは module が解く。 */
+  function sendThroughGate(key, freeText) {
+    var wait = awaitSendGate({ key: key, freeText: !!freeText });
+    if (!wait) { startAskFlow(key, freeText); return; }
+    wait.then(function(ok) { if (ok !== false) startAskFlow(key, freeText); });
+  }
+  /* 送信を取りやめたときに保留中の要求を破棄する口。同意の保留は module が持つ。 */
+  function dropPendingAsk() {}
+  /* 送信ゲート側の表示更新。同意状態の表示は module がこの 1 本で足す。 */
+  function refreshSendGates() { updateSendEnabled(); }
+  root.UmeboshiAskSendGate = {
+    register: registerSendGate,
+    directive: setModuleDirective,
+    timeout: SEND_GATE_TIMEOUT_MS,
+  };
+  /* umeboshi-ask:module:script begin */
+  /* umeboshi-ask:module:script end */
+  /* #112: 文言表そのものも外から見る（ja/en のキー差分を機械的に落とすため）。 */
+  root.UmeboshiAskI18n = { normalizeLang: normalizeLang, detectLang: detectLang, uiText: uiText };
+<%- include('./askRenderer.ejs') -%>
+
+
+
+  /* ---------- 以下DOM依存。DOMなし（node検証時）はここで終了 ---------- */
+  var sendBtn = byId("umeboshi-ask-send-btn");
+  var saveBtn = byId("umeboshi-ask-save-btn");
+  var banner = byId("umeboshi-ask-cardid-banner");
+  var settingsModal = byId("umeboshi-ask-settings-modal");
+  var statusEl = byId("umeboshi-ask-models-status");
+  if (!sendBtn || !saveBtn || !banner || !settingsModal) return;
+
+  var inputEl = byId("umeboshi-ask-input");
+  var sendHint = byId("umeboshi-ask-send-hint");
+  var settingsBody = byId("umeboshi-ask-settings-body");
+  var tabsEl = byId("umeboshi-ask-settings-tabs");
+  var searchInput = byId("umeboshi-ask-settings-search");
+  var searchHint = byId("umeboshi-ask-search-hint");
+  var detailbar = byId("umeboshi-ask-detailbar");
+  var detailBack = byId("umeboshi-ask-detail-back");
+  var detailSrc = byId("umeboshi-ask-detail-src");
+  var detailTitle = byId("umeboshi-ask-detail-title");
+  var resultsEl = byId("umeboshi-ask-results");
+
+  /* ナビ状態: menu(タブ内項目行) / results(検索結果行) / detail(項目詳細) */
+  var currentTab = "general";
+  var currentQuery = "";
+  var openDesc = null;   // {panel, key} 詳細表示中の項目
+  var detailFrom = "tabs"; // 'tabs' | 'search'
+
+  /* #25 送信ボタンの有効化はここに一本化（残量切れ＞通常の順。送信中も停止用に有効のまま）。 */
+  function updateSendEnabled() {
+    if (!sendBtn) return;
+    if (typeof creditBlocked !== "undefined" && creditBlocked) {
+      sendBtn.disabled = true;
+      sendBtn.title = txNow().noBalanceTitle;
+    } else {
+      sendBtn.disabled = false;
+      sendBtn.title = "";
+    }
+    renderSendStop();
+  }
+  /* 送信⇔停止の見た目切替。停止中は送信ボタンを停止ボタンとして使う。 */
+  function setIconText(btn, icon, text) {
+    if (!btn) return;
+    var doc = (typeof document !== "undefined") ? document : null;
+    while (btn.firstChild) btn.removeChild(btn.firstChild);
+    /* textContent代入が実DOMではテキストノードを作る。アイコンはその前に挿すので見た目文字は1回だけ。 */
+    btn.textContent = text || "";
+    if (doc && doc.createElement) {
+      var ic = doc.createElement("span");
+      ic.className = "umeboshi-ask-ic";
+      ic.setAttribute("aria-hidden", "true");
+      /* 内蔵SVGのpathで描く。外部フォント・外部参照なし。 */
+      ic.innerHTML = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"" + (icon || "") + "\"/></svg>";
+      if (typeof btn.insertBefore === "function") btn.insertBefore(ic, btn.firstChild);
+      else btn.appendChild(ic);
+    }
+  }
+  function renderSendStop() {
+    if (!sendBtn) return;
+    var t = txNow();
+    if (typeof streaming !== "undefined" && streaming) setIconText(sendBtn, t.iconStop, t.stop);
+    else setIconText(sendBtn, t.iconSend, t.send);
+  }
+
+  /* ---------- S7: 項目行のサブ表示（現在値の要約・Android式） ---------- */
+  function itemSub(item) {
+    var kind = item.getAttribute("data-subkey") || "";
+    var lang = "ja";
+    try { lang = detectLang(UmeboshiAskSettings.load()).lang; } catch (e) {}
+    var t = uiText(lang);
+    if (kind === "sendmode") {
+      return UmeboshiAskSettings.load().sendMode === "enter" ? t.sendModeEnterShort : t.sendModeButtonShort;
+    }
+    /* #256 OS2b: 接続先は現在の値（公式/自分のWorker）を、トークンは設定の有無だけ見せる
+       （トークンは端末内のみ。メニュー行に中身は出さない）。 */
+    if (kind === "workerurl") {
+      return readWorkerUrl() ? t.workerUrlCustom : t.workerUrlOfficial;
+    }
+    if (kind === "workertoken") {
+      return readWorkerToken() ? t.workerTokenSet : t.workerTokenUnset;
+    }
+    if (kind === "lang") {
+      var det = detectLang(UmeboshiAskSettings.load());
+      return det.lang + t.punctOpen + langSourceLabel(det.source, t) + t.punctClose;
+    }
+    /* クレジット残量のサブ表示は module（OS5a）が itemSub に足す。 */
+    return item.getAttribute("data-sub") || "";
+  }
+  function langSourceLabel(source, t) {
+    if (source === "explicit") return t.srcExplicit;
+    if (source === "anki-desktop") return t.srcDesktop;
+    if (source === "ankidroid") return t.srcDroid;
+    if (source === "navigator") return t.srcNavigator;
+    if (source === "fallback") return t.srcFallback;
+    return source;
+  }
+  /* #130 検索語を挟む引用符。1キーに2文字（開き・閉じ）を詰めて持つ。 */
+  function searchQuotePair(t) {
+    var q = t.searchQuote || "";
+    return { open: q.charAt(0) || "", close: q.charAt(1) || q };
+  }
+  /* #85 ボタン面の文字列と {question} に入る文字列をこの1つに寄せる。 */
+  /* 設定でラベルを書いたらその文字列が優先。空ならUI言語、なければキー。 */
+  function templateLabel(key, s, t) {
+    if (!s) { try { s = UmeboshiAskSettings.load(); } catch (e) { s = null; } }
+    if (!t) {
+      var lang = "ja";
+      try { lang = detectLang(s).lang; } catch (e2) { lang = "ja"; }
+      t = uiText(lang);
+    }
+    var override = "";
+    if (s && s.prompts && s.prompts[key] && s.prompts[key].label) override = s.prompts[key].label;
+    else if (s && s.customs) {
+      for (var i = 0; i < s.customs.length; i++) {
+        if (s.customs[i].id === key && s.customs[i].label) { override = s.customs[i].label; break; }
+      }
+    }
+    return override || t[key] || t.customName || key;
+  }
+
+  /* ---------- S7: 言語反映 ---------- */
+  function applyLang() {
+    var s = UmeboshiAskSettings.load();
+    var det = detectLang(s);
+    var t = uiText(det.lang);
+    /* #42 Q9: LOCALES集約の配線。静的HTMLは初期表示のまま、動的文面を上書きする。 */
+    each(qsa("#umeboshi-ask-buttons [data-ask]"), function(btn) {
+      btn.textContent = templateLabel(btn.getAttribute("data-ask"), s, t);
+    });
+    renderSendStop();
+    if (inputEl) inputEl.placeholder = t.askPh;
+    if (searchInput) { searchInput.placeholder = t.search; searchInput.setAttribute("aria-label", t.settingsSearchLabel); }
+    var drawerEl = byId("umeboshi-ask-drawer");
+    if (drawerEl) drawerEl.setAttribute("data-uilang", det.lang);
+    var settingsTitle = byId("umeboshi-ask-settings-title");
+    if (settingsTitle) settingsTitle.textContent = t.settingsTitle;
+    var settingsClose = byId("umeboshi-ask-settings-close");
+    if (settingsClose) settingsClose.setAttribute("aria-label", t.settingsClose);
+    var searchClear = byId("umeboshi-ask-search-clear");
+    if (searchClear) searchClear.setAttribute("aria-label", t.settingsClear);
+    var tabsEl2 = byId("umeboshi-ask-settings-tabs");
+    if (tabsEl2) tabsEl2.setAttribute("aria-label", t.settingsTabs);
+    each(qsa("#umeboshi-ask-settings-tabs .umeboshi-ask-tab"), function(tab) {
+      var name = tab.getAttribute("data-tab");
+      var label = tabNameLocal(name, t);
+      if (label) {
+        var count = tab.querySelector ? (tab.querySelector(".umeboshi-ask-tab-count") || null) : null;
+        tab.textContent = "";
+        tab.appendChild(document.createTextNode(label));
+        if (count) tab.appendChild(count);
+        else { var c = document.createElement("span"); c.className = "umeboshi-ask-tab-count"; tab.appendChild(c); }
+      }
+    });
+    var sendHintEl = byId("umeboshi-ask-send-hint");
+    if (sendHintEl) sendHintEl.textContent = (s.sendMode === "enter") ? t.sendHintEnter : t.sendHintButton;
+    /* #129 静的日本語（見出し・ラジオ・説明文・状態）もUI言語に追従させる。
+       data-title はドリルインのキーとして凍結。ここは「表示」だけを書き換える。 */
+    var stSendmode = byId("umeboshi-ask-title-sendmode");
+    if (stSendmode) stSendmode.textContent = t.sendModeTitle;
+    var stSendmodeButton = byId("umeboshi-ask-sendmode-button");
+    if (stSendmodeButton) stSendmodeButton.textContent = t.sendModeButton;
+    var stSendmodeEnter = byId("umeboshi-ask-sendmode-enter");
+    if (stSendmodeEnter) stSendmodeEnter.textContent = t.sendModeEnter;
+    /* #256 OS2b 接続先とトークンの表示もUI言語に追従させる。 */
+    var stWorkerUrl = byId("umeboshi-ask-title-workerurl");
+    if (stWorkerUrl) stWorkerUrl.textContent = t.workerUrlTitle;
+    var stWorkerUrlNote = byId("umeboshi-ask-worker-url-note");
+    if (stWorkerUrlNote) stWorkerUrlNote.textContent = t.workerUrlNote;
+    var stWorkerToken = byId("umeboshi-ask-title-workertoken");
+    if (stWorkerToken) stWorkerToken.textContent = t.workerTokenTitle;
+    var stWorkerTokenNote = byId("umeboshi-ask-worker-token-note");
+    if (stWorkerTokenNote) stWorkerTokenNote.textContent = t.workerTokenNote;
+    var stReset = byId("umeboshi-ask-title-reset");
+    if (stReset) stReset.textContent = t.resetTitle;
+    var stResetPrompts = byId("umeboshi-ask-reset-prompts");
+    if (stResetPrompts) stResetPrompts.textContent = t.resetPrompts;
+    var stResetAll = byId("umeboshi-ask-reset-all");
+    if (stResetAll) stResetAll.textContent = t.resetAll;
+    var stPromptsNote = byId("umeboshi-ask-prompts-note");
+    if (stPromptsNote) stPromptsNote.textContent = t.promptsNote;
+    var stLang = byId("umeboshi-ask-title-lang");
+    if (stLang) stLang.textContent = t.langTitle;
+    var stLangAuto = byId("umeboshi-ask-lang-radio-auto");
+    if (stLangAuto) stLangAuto.textContent = t.langAuto;
+    var stLangJa = byId("umeboshi-ask-lang-radio-ja");
+    if (stLangJa) stLangJa.textContent = t.langJa;
+    var stLangEn = byId("umeboshi-ask-lang-radio-en");
+    if (stLangEn) stLangEn.textContent = t.langEn;
+    var stMigrate = byId("umeboshi-ask-title-migrate");
+    if (stMigrate) stMigrate.textContent = t.migrateTitle;
+    var stMigrateExport = byId("umeboshi-ask-export-btn");
+    if (stMigrateExport) stMigrateExport.textContent = t.migrateExport;
+    var stMigrateImport = byId("umeboshi-ask-import-btn");
+    if (stMigrateImport) stMigrateImport.textContent = t.migrateImport;
+    /* クレジット残量・課金の見出しとラベルは module（OS5a）が applyLang に足す。 */
+    /* #129 隠し再利用の保存ボタン。threadSave を流用して「保存」の日本語をEnglish UI から残さない。 */
+    if (saveBtn) saveBtn.textContent = t.threadSave;
+    /* #129 見出しを書き換えたので、開いている詳細画面の見出しだけ追従させる
+       （開いていなければ何もしない。閉じている画面を作る必要は無い）。 */
+    if (openDesc) reopenDetail();
+    /* #96 AnkiDroid は既定でカード内の入力欄をタップフォーカスできない（IMEが出ない）。
+       カードから設定値を読み戻せないので、AnkiDroid でだけ一行の説明を出す。 */
+    var droidKbHint = byId("umeboshi-ask-ankidroid-kb-hint");
+    if (droidKbHint) { droidKbHint.textContent = t.ankiDroidKbHint; droidKbHint.hidden = !isAnkiDroid(); }
+    /* #127 表示中バナーの文言も言語切替に追従させる（hidden は boot 判定が握る）。 */
+    var storageBanner = byId("umeboshi-ask-storage-banner");
+    if (storageBanner && !storageBanner.hidden) storageBanner.textContent = t.storageReset;
+    var settingsBtn = byId("umeboshi-ask-settings-btn");
+    if (settingsBtn) { setIconText(settingsBtn, t.iconSettings, ""); settingsBtn.title = t.settingsTitle; settingsBtn.setAttribute("aria-label", t.settingsTitle); }
+    /* #250 Copy URL popup の文面。既定はログイン側。開いているときはその kind で引き直す。 */
+    var urlCloseEl = byId("umeboshi-ask-url-close");
+    if (urlCloseEl) urlCloseEl.setAttribute("aria-label", t.modelClose);
+    if (!refreshUrlPopupStrings()) applyUrlPopupStrings("login", "");
+    var modelLabelEl = byId("umeboshi-ask-model-label");
+    if (modelLabelEl) modelLabelEl.textContent = t.modelLabel;
+    var modelBtn = byId("umeboshi-ask-model");
+    if (modelBtn) modelBtn.setAttribute("aria-label", t.modelAria);
+    var modelSheetTitle = byId("umeboshi-ask-model-sheet-title");
+    if (modelSheetTitle) modelSheetTitle.textContent = t.modelLabel;
+    var modelClose = byId("umeboshi-ask-model-close");
+    if (modelClose) modelClose.setAttribute("aria-label", t.modelClose);
+    var effortTitle = byId("umeboshi-ask-effort-sheet-title");
+    if (effortTitle) effortTitle.textContent = t.effortLabel;
+    var effortClose = byId("umeboshi-ask-effort-close");
+    if (effortClose) effortClose.setAttribute("aria-label", t.effortClose);
+    /* #198 Effort 一覧の「モデル選択に戻る」。 */
+    var effortBack = byId("umeboshi-ask-effort-back");
+    if (effortBack) effortBack.setAttribute("aria-label", t.effortBack);
+    /* #198 4段階の題名・閉じる・詳細入口。級名は行を作り直すため renderTierList 側。 */
+    var tierTitle = byId("umeboshi-ask-tier-sheet-title");
+    if (tierTitle) tierTitle.textContent = t.tierTitle;
+    var tierSheet = byId("umeboshi-ask-tier-sheet");
+    if (tierSheet) tierSheet.setAttribute("aria-label", t.tierAria);
+    var tierListEl = byId("umeboshi-ask-tier-list");
+    if (tierListEl) tierListEl.setAttribute("aria-label", t.tierAria);
+    var tierClose = byId("umeboshi-ask-tier-close");
+    if (tierClose) tierClose.setAttribute("aria-label", t.modelClose);
+    var tierDetail = byId("umeboshi-ask-tier-detail-btn");
+    if (tierDetail) tierDetail.textContent = t.tierDetail;
+    /* #198 モデル一覧の「4段階に戻る」。 */
+    var modelBack = byId("umeboshi-ask-model-back");
+    if (modelBack) modelBack.setAttribute("aria-label", t.modelBack);
+    try {
+      renderModelButton(selectedModelId() || storeGet(MODEL_KEY) || "");
+      renderModelList(selectedModelId() || storeGet(MODEL_KEY) || "");
+      if (effortPopup && !effortPopup.hidden && effortTargetId !== "") openEffortPopup(effortTargetId);
+      var effortBackEl = byId("umeboshi-ask-effort-back");
+      if (effortBackEl) effortBackEl.setAttribute("aria-label", txNow().effortBack);
+      /* #198 4段階も言語切替で描き直す。級名は LOCALES 側なので開き直すが必要。 */
+      if (tierPopup && !tierPopup.hidden) openTierPopup();
+    } catch (eEffort) {}
+    var threadTitle = byId("umeboshi-ask-thread-title");
+    if (threadTitle) threadTitle.textContent = t.threadTitle;
+    var bannerEl = byId("umeboshi-ask-cardid-banner");
+    if (bannerEl && !bannerEl.hidden) bannerEl.textContent = t.cardBanner;
+    each(qsa('input[name="umeboshi-ask-lang"]'), function(r) {
+      r.checked = (r.value === s.lang);
+    });
+    var langStatus = byId("umeboshi-ask-lang-status");
+    if (langStatus) {
+      var msg = t.langStatus + det.lang + t.punctOpen + t.langSource + langSourceLabel(det.source, t) + t.punctClose;
+      if (det.source === "fallback") msg += t.langFallbackHint;
+      langStatus.textContent = msg;
+    }
+  }
+
+  /* ---------- S7: 質問ボタン描画（既定5＋カスタム無制限） ---------- */
+  function renderAskButtons() {
+    var s = UmeboshiAskSettings.load();
+    var box = byId("umeboshi-ask-buttons");
+    if (!box) return;
+    each(qsa("#umeboshi-ask-buttons [data-ask-custom]"), function(btn) {
+      if (btn.parentNode === box) box.removeChild(btn);
+    });
+    each(s.customs, function(c) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("data-ask-custom", c.id);
+      b.textContent = c.label || txNow().customName;
+      /* #25 単一ゲート: 実送信は questions 委譲に一本化。ここに直接配線しない。 */
+      box.appendChild(b);
+    });
+    applyLang();
+  }
+
+  /* ---------- S7: 送信モード → エディタ動作に反映 ---------- */
+  function applySendMode() {
+    var s = UmeboshiAskSettings.load();
+    each(qsa('input[name="umeboshi-ask-sendmode"]'), function(r) {
+      r.checked = (r.value === s.sendMode);
+    });
+    if (sendHint) {
+      var tS = txNow();
+      sendHint.textContent = (s.sendMode === "enter") ? tS.sendHintEnter : tS.sendHintButton;
+    }
+    if (inputEl) {
+      inputEl.onkeydown = function(e) {
+        e = e || root.event;
+        var key = e.key || e.keyCode;
+        var isEnter = (key === "Enter" || key === 13);
+        if (!isEnter) return;
+        var mode = UmeboshiAskSettings.load().sendMode;
+        if (mode === "enter") {
+          if (!e.shiftKey) {
+            if (e.preventDefault) e.preventDefault();
+            sendBtn.click();
+          }
+        } else {
+          if (e.ctrlKey || e.metaKey) {
+            if (e.preventDefault) e.preventDefault();
+            sendBtn.click();
+          }
+        }
+      };
+    }
+  }
+
+  /* ---------- S7: プロンプト編集UI（各エディタが1項目 data-title付き） ---------- */
+  function defaultKeyName(k, t) { return t[k] || k; }
+  function searchHay(kind, label, body) {
+    return "プロンプト prompt " + kind + " " + (label || "") + " " + (body || "");
+  }
+  function renderPromptEditors() {
+    var s = UmeboshiAskSettings.load();
+    var det = detectLang(s);
+    var t = uiText(det.lang);
+    var list = byId("umeboshi-ask-prompt-list");
+    if (list) {
+      while (list.firstChild) list.removeChild(list.firstChild);
+      each(DEFAULT_KEYS, function(k) {
+        var wrap = document.createElement("div");
+        wrap.className = "umeboshi-ask-item";
+        wrap.setAttribute("data-key", k);
+        wrap.setAttribute("data-title", defaultKeyName(k, t) + t.promptOf);
+        var head = document.createElement("div");
+        head.className = "umeboshi-ask-row";
+        var title = document.createElement("b");
+        title.textContent = defaultKeyName(k, t);
+        var spacer = document.createElement("span");
+        spacer.style.flex = "1";
+        var reset = document.createElement("button");
+        reset.type = "button";
+        reset.textContent = t.promptReset;
+        reset.addEventListener("click", function() {
+          var cur = UmeboshiAskSettings.load();
+          cur.prompts[k] = { label: "", body: defaultPromptsFor(detectLang(cur).lang)[k] };
+          UmeboshiAskSettings.save(cur);
+          renderPromptEditors();
+          renderAskButtons();
+          buildAllMenus();
+          reopenDetail();
+          refreshSearch();
+        });
+        head.appendChild(title);
+        head.appendChild(spacer);
+        head.appendChild(reset);
+        var labLabel = document.createElement("label");
+        labLabel.textContent = t.promptLabel;
+        var labInput = document.createElement("input");
+        labInput.type = "text";
+        labInput.value = s.prompts[k].label || "";
+        labInput.placeholder = defaultKeyName(k, t);
+        var bodyLabel = document.createElement("label");
+        bodyLabel.textContent = t.promptBody;
+        var bodyInput = document.createElement("textarea");
+        bodyInput.rows = 4;
+        bodyInput.value = s.prompts[k].body;
+        labInput.addEventListener("input", function() {
+          var cur = UmeboshiAskSettings.load();
+          cur.prompts[k].label = labInput.value;
+          UmeboshiAskSettings.save(cur);
+          wrap.setAttribute("data-search", searchHay(k, labInput.value, bodyInput.value));
+          wrap.setAttribute("data-title", (labInput.value || defaultKeyName(k, uiText(detectLang(cur).lang))) + txNow().promptOf);
+          renderAskButtons();
+          buildAllMenus();
+          refreshSearch();
+        });
+        bodyInput.addEventListener("input", function() {
+          if (trim(bodyInput.value) === "") return;
+          var cur = UmeboshiAskSettings.load();
+          cur.prompts[k].body = bodyInput.value;
+          UmeboshiAskSettings.save(cur);
+          wrap.setAttribute("data-search", searchHay(k, labInput.value, bodyInput.value));
+          refreshSearch();
+        });
+        wrap.appendChild(head);
+        wrap.appendChild(labLabel);
+        wrap.appendChild(labInput);
+        wrap.appendChild(bodyLabel);
+        wrap.appendChild(bodyInput);
+        wrap.setAttribute("data-search", searchHay(k, s.prompts[k].label, s.prompts[k].body));
+        list.appendChild(wrap);
+      });
+    }
+    var clist = byId("umeboshi-ask-custom-list");
+    if (clist) {
+      while (clist.firstChild) clist.removeChild(clist.firstChild);
+      each(s.customs, function(c) {
+        var wrap = document.createElement("div");
+        wrap.className = "umeboshi-ask-item";
+        wrap.setAttribute("data-custom", c.id);
+        wrap.setAttribute("data-title", c.label || t.customName);
+        var head = document.createElement("div");
+        head.className = "umeboshi-ask-row";
+        var title = document.createElement("b");
+        title.textContent = c.label || t.customName;
+        var spacer = document.createElement("span");
+        spacer.style.flex = "1";
+        var del = document.createElement("button");
+        del.type = "button";
+        del.textContent = t.customDelete;
+        del.addEventListener("click", function() {
+          var cur = UmeboshiAskSettings.load();
+          var next = [];
+          each(cur.customs, function(x) { if (x.id !== c.id) next.push(x); });
+          cur.customs = next;
+          UmeboshiAskSettings.save(cur);
+          if (openDesc && openDesc.key === c.id) closeDetail();
+          renderPromptEditors();
+          renderAskButtons();
+          buildAllMenus();
+          refreshSearch();
+        });
+        head.appendChild(title);
+        head.appendChild(spacer);
+        head.appendChild(del);
+        var labInput = document.createElement("input");
+        labInput.type = "text";
+        labInput.value = c.label || "";
+        labInput.setAttribute("aria-label", t.customLabelAria);
+        var bodyInput = document.createElement("textarea");
+        bodyInput.rows = 3;
+        bodyInput.value = c.body;
+        bodyInput.setAttribute("aria-label", t.customBodyAria);
+        labInput.addEventListener("input", function() {
+          var cur = UmeboshiAskSettings.load();
+          each(cur.customs, function(x) { if (x.id === c.id) x.label = labInput.value; });
+          UmeboshiAskSettings.save(cur);
+          title.textContent = labInput.value || txNow().customName;
+          wrap.setAttribute("data-title", labInput.value || txNow().customName);
+          wrap.setAttribute("data-search", searchHay(txNow().customName + " custom", labInput.value, bodyInput.value));
+          renderAskButtons();
+          buildAllMenus();
+          refreshSearch();
+        });
+        bodyInput.addEventListener("input", function() {
+          if (trim(bodyInput.value) === "") return;
+          var cur = UmeboshiAskSettings.load();
+          each(cur.customs, function(x) { if (x.id === c.id) x.body = bodyInput.value; });
+          UmeboshiAskSettings.save(cur);
+          wrap.setAttribute("data-search", searchHay(txNow().customName + " custom", labInput.value, bodyInput.value));
+          refreshSearch();
+        });
+        wrap.appendChild(head);
+        wrap.appendChild(labInput);
+        wrap.appendChild(bodyInput);
+        wrap.setAttribute("data-search", searchHay(t.customName + " custom", c.label, c.body));
+        clist.appendChild(wrap);
+      });
+    }
+  }
+
+  /* ---------- S7: タブ（フォルダ型）＋ドリルインナビ ---------- */
+  function panelEl(name) {
+    var panels = qsa("#umeboshi-ask-settings-body .umeboshi-ask-panel");
+    for (var i = 0; i < panels.length; i++) {
+      if (panels[i].getAttribute("data-panel") === name) return panels[i];
+    }
+    return null;
+  }
+  function panelNameOf(item) {
+    var p = item.parentNode;
+    while (p && !(p.getAttribute && p.getAttribute("data-panel"))) p = p.parentNode;
+    return p ? p.getAttribute("data-panel") : null;
+  }
+  /* 項目の安定キー: openDesc保持・reopenDetail復元・カスタム削除判定に使う。data-key / data-custom が無い静的項目は data-title をキーにする（重複なし想定）。 */
+  function itemKey(item) {
+    try {
+      if (!item || !item.getAttribute) return "";
+      var k = item.getAttribute("data-key");
+      if (k) return k;
+      var c = item.getAttribute("data-custom");
+      if (c) return c;
+      var t = item.getAttribute("data-title");
+      if (t && trim(t) !== "") return trim(t);
+    } catch (e) {}
+    return "";
+  }
+  /* #129 表示はUI言語に追従させるので、見出し要素 → <b> → data-title の順に読む。
+     data-title は itemKey() のキー（ドリルイン復元）として日本語のまま凍結した。 */
+  function itemTitle(item) {
+    try {
+      if (!item || !item.getAttribute) return txNow().itemFallback;
+      if (item.querySelector) {
+        var head = item.querySelector(".umeboshi-ask-item-title");
+        if (head && head.textContent && trim(head.textContent) !== "") return trim(head.textContent);
+        var b = item.querySelector("b");
+        if (b && b.textContent && trim(b.textContent) !== "") return trim(b.textContent);
+      }
+      var t = item.getAttribute("data-title");
+      if (t && trim(t) !== "") return trim(t);
+    } catch (e) {}
+    return txNow().itemFallback;
+  }
+  function findItem(panel, key) {
+    var items = panel.querySelectorAll(".umeboshi-ask-item");
+    for (var i = 0; i < items.length; i++) {
+      if (itemKey(items[i]) === key) return items[i];
+    }
+    return null;
+  }
+  function langNow() { try { return detectLang(UmeboshiAskSettings.load()).lang; } catch (e) { return "ja"; } }
+  function txNow() { return uiText(langNow()); }
+  function tabNameLocal(name, t) {
+    var x = t || txNow();
+    if (name === "general") return x.tabGeneral;
+    if (name === "prompts") return x.tabPrompts;
+    if (name === "lang") return x.tabLang;
+    if (name === "account") return x.tabAccount;
+    /* "credit" は module（OS5a）が tabNameLocal に足す。 */
+    return name;
+  }
+
+  function menuRow(title, sub) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "umeboshi-ask-menurow";
+    var span = document.createElement("span");
+    span.className = "t";
+    span.textContent = title;
+    if (sub) {
+      var small = document.createElement("small");
+      small.textContent = sub;
+      span.appendChild(small);
+    }
+    var chev = document.createElement("span");
+    chev.className = "chev";
+    chev.textContent = "›";
+    b.appendChild(span);
+    b.appendChild(chev);
+    return b;
+  }
+  function buildMenu(name) {
+    var panel = panelEl(name);
+    if (!panel) return;
+    var menu = panel.querySelector('[data-menu="' + name + '"]');
+    if (!menu) return;
+    while (menu.firstChild) menu.removeChild(menu.firstChild);
+    each(panel.querySelectorAll(".umeboshi-ask-item"), function(item) {
+      var row = menuRow(itemTitle(item), itemSub(item));
+      row.addEventListener("click", function() { openDetail(item, "tabs"); });
+      menu.appendChild(row);
+    });
+    if (name === "prompts") {
+      var tAdd = txNow();
+      var add = menuRow(tAdd.customAdd, tAdd.customNoLimit);
+      add.className = add.className + " add";
+      add.addEventListener("click", function() { addCustom(); });
+      menu.appendChild(add);
+    }
+  }
+  function buildAllMenus() {
+    each(TAB_ORDER, function(name) { buildMenu(name); });
+  }
+  function updateMenuSubs() { buildAllMenus(); }
+
+  function syncTabsUI() {
+    each(qsa("#umeboshi-ask-settings-tabs .umeboshi-ask-tab"), function(tab) {
+      var on = tab.getAttribute("data-tab") === currentTab;
+      if (on) tab.classList.add("active"); else tab.classList.remove("active");
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+    });
+  }
+  // タブ一覧表示（項目行モード）
+  function showTabs() {
+    openDesc = null;
+    detailbar.hidden = true;
+    resultsEl.hidden = true;
+    if (settingsBody) settingsBody.classList.remove("searching");
+    if (tabsEl) tabsEl.hidden = false;
+    syncTabsUI();
+    each(qsa("#umeboshi-ask-settings-body .umeboshi-ask-panel"), function(panel) {
+      var on = panel.getAttribute("data-panel") === currentTab;
+      panel.hidden = !on;
+      panel.classList.remove("detail-mode");
+      panel.classList.add("menu-mode");
+      each(panel.querySelectorAll(".umeboshi-ask-item"), function(item) {
+        item.classList.remove("open");
+      });
+    });
+    if (settingsBody) settingsBody.scrollTop = 0;
+  }
+  function setTab(name) {
+    currentTab = name;
+    currentQuery = "";
+    if (searchInput) searchInput.value = "";
+    var clearBtn = byId("umeboshi-ask-search-clear");
+    if (clearBtn) clearBtn.hidden = true;
+    if (searchHint) searchHint.textContent = "";
+    showTabs();
+  }
+  // 項目詳細表示（Android式ドリルイン）
+  function openDetail(item, from) {
+    var panel = panelNameOf(item) ? panelEl(panelNameOf(item)) : null;
+    if (!panel) return;
+    currentTab = panel.getAttribute("data-panel");
+    detailFrom = from;
+    openDesc = { panel: currentTab, key: itemKey(item) };
+    syncTabsUI();
+    if (from === "search") {
+      if (tabsEl) tabsEl.hidden = true;
+      resultsEl.hidden = true;
+    } else {
+      if (tabsEl) tabsEl.hidden = false;
+      resultsEl.hidden = true;
+    }
+    each(qsa("#umeboshi-ask-settings-body .umeboshi-ask-panel"), function(p) {
+      var on = p === panel;
+      p.hidden = !on;
+      p.classList.remove("menu-mode");
+      p.classList.remove("detail-mode");
+      if (on) p.classList.add("detail-mode");
+      each(p.querySelectorAll(".umeboshi-ask-item"), function(it) {
+        if (it === item) it.classList.add("open"); else it.classList.remove("open");
+      });
+    });
+    var tD = txNow();
+    detailSrc.textContent = (from === "search") ? tD.searchResults : tabNameLocal(currentTab);
+    detailTitle.textContent = itemTitle(item);
+    detailbar.hidden = false;
+    if (settingsBody) settingsBody.scrollTop = 0;
+  }
+  function closeDetail() {
+    if (!openDesc) return;
+    var from = detailFrom;
+    openDesc = null;
+    detailbar.hidden = true;
+    if (from === "search") {
+      runSearch(currentQuery);
+    } else {
+      showTabs();
+    }
+  }
+  function reopenDetail() {
+    if (!openDesc) return;
+    var panel = panelEl(openDesc.panel);
+    if (!panel) { openDesc = null; return; }
+    var item = findItem(panel, openDesc.key);
+    if (!item) { openDesc = null; showTabs(); return; }
+    openDetail(item, detailFrom);
+  }
+
+  /* ---------- S7: 検索 → 結果リスト表示（タップで項目へ） ---------- */
+  function collectMatches(q) {
+    var out = [];
+    each(qsa("#umeboshi-ask-settings-body .umeboshi-ask-item"), function(item) {
+      var hay = ((item.getAttribute("data-title") || "") + " " + (item.getAttribute("data-search") || "") + " " + (item.textContent || "")).toLowerCase();
+      if (hay.indexOf(q) >= 0) out.push(item);
+    });
+    return out;
+  }
+  function runSearch(rawQ) {
+    currentQuery = trim(rawQ || "");
+    var q = currentQuery.toLowerCase();
+    openDesc = null;
+    detailbar.hidden = true;
+    each(qsa("#umeboshi-ask-settings-tabs .umeboshi-ask-tab-count"), function(el) { el.textContent = ""; });
+    if (!searchHint) return;
+    if (q === "") {
+      if (tabsEl) tabsEl.hidden = false;
+      showTabs();
+      searchHint.textContent = "";
+      return;
+    }
+    var matches = collectMatches(q);
+    var counts = {};
+    each(matches, function(item) {
+      var pname = panelNameOf(item);
+      if (pname) counts[pname] = (counts[pname] || 0) + 1;
+    });
+    each(qsa("#umeboshi-ask-settings-tabs .umeboshi-ask-tab"), function(tab) {
+      var name = tab.getAttribute("data-tab");
+      var badge = tab.querySelector(".umeboshi-ask-tab-count");
+      if (badge && counts[name]) badge.textContent = "(" + counts[name] + ")";
+    });
+    if (matches.length === 0) {
+      if (tabsEl) tabsEl.hidden = true;
+      each(qsa("#umeboshi-ask-settings-body .umeboshi-ask-panel"), function(p) { p.hidden = true; });
+      while (resultsEl.firstChild) resultsEl.removeChild(resultsEl.firstChild);
+      resultsEl.hidden = false;
+      var tN = txNow();
+      var qN = searchQuotePair(tN);
+      searchHint.textContent = qN.open + currentQuery + qN.close + tN.searchNone;
+      return;
+    }
+    if (tabsEl) tabsEl.hidden = true;
+    each(qsa("#umeboshi-ask-settings-body .umeboshi-ask-panel"), function(p) { p.hidden = true; });
+    while (resultsEl.firstChild) resultsEl.removeChild(resultsEl.firstChild);
+    var tS = txNow();
+    each(matches, function(item) {
+      var pname = panelNameOf(item);
+      var sub = tabNameLocal(pname, tS) || "";
+      var isub = itemSub(item);
+      if (isub) sub += tS.punctDot + isub;
+      var row = menuRow(itemTitle(item), sub);
+      row.addEventListener("click", function() { openDetail(item, "search"); });
+      resultsEl.appendChild(row);
+    });
+    resultsEl.hidden = false;
+    var names = [];
+    var tR = txNow();
+    var qR = searchQuotePair(tR);
+    for (var k in counts) {
+      if (Object.prototype.hasOwnProperty.call(counts, k)) {
+        names.push(tabNameLocal(k, tR) + tR.countIn.replace("__N__", String(counts[k])));
+      }
+    }
+    searchHint.textContent = qR.open + currentQuery + qR.close + ": " + names.join(tR.punctDot) + tR.searchFound;
+  }
+  function refreshSearch() {
+    if (!searchInput) return;
+    if (trim(searchInput.value) === "") { updateMenuSubs(); return; }
+    runSearch(searchInput.value);
+  }
+
+  function addCustom() {
+    var cur = UmeboshiAskSettings.load();
+    var n = cur.customs.length + 1;
+    var id = "c" + (new Date().getTime().toString(36)) + n;
+    var tC = txNow();
+    var langC = langNow();
+    cur.customs.push({
+      id: id,
+      label: tC.customName + n,
+      body: langC === "en" ? "About \"{question}\", answer based on the card context.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}" : "「{question}」について、カード文脈を踏まえて答えてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}"
+    });
+    UmeboshiAskSettings.save(cur);
+    renderPromptEditors();
+    renderAskButtons();
+    buildAllMenus();
+    currentQuery = "";
+    if (searchInput) searchInput.value = "";
+    if (searchHint) searchHint.textContent = "";
+    setTab("prompts");
+  }
+
+  /* ---------- #256 OS2b: 接続先Workerとアクセストークン（自己ホスト導線） ---------- */
+  /* URL は http/https の形だけ受け、壊れた値は空（既定に戻す）と見なす。
+     トークンは前後空白を落とした形で保存する（中身の検証はWorker側が行う）。 */
+  function normalizeWorkerUrl(raw) {
+    var s = typeof raw === "string" ? trim(raw) : "";
+    if (!s) return "";
+    return /^https?:\/\/\S+$/.test(s) ? s : "";
+  }
+  function readWorkerUrl() {
+    try { return normalizeWorkerUrl(storeGet(WORKER_URL_KEY)); } catch (e) { return ""; }
+  }
+  function readWorkerToken() {
+    try { return trim(storeGet(WORKER_TOKEN_KEY) || ""); } catch (e) { return ""; }
+  }
+  /* 接続先の解決順: 設定の Worker URL > root.UMEBOSHI_ASK_API_BASE（外部フック）
+     > 既定の公式 URL（導線維持）。#258 OS2c が全通信の読みをこの順へ寄せる。 */
+  function currentApiBase() {
+    var set = readWorkerUrl();
+    if (set) return set;
+    try { if (root && typeof root.UMEBOSHI_ASK_API_BASE === "string" && root.UMEBOSHI_ASK_API_BASE) return root.UMEBOSHI_ASK_API_BASE; } catch (e) {}
+    return DEFAULT_API_BASE;
+  }
+  /* Authorization の優先順位（#258 OS2c で統一）: 設定のアクセストークンが */
+  /* あればそれを Bearer に使い、無ければログインのアクセストークン。 */
+  /* 設定が空のときは挙動を変えない。login の token は module の閉包が持ち、 */
+  /* base は typeof ガードで読口だけを拾う（OS5c #265）。 */
+  function bearerToken() {
+    try { var set = readWorkerToken(); if (set) return set; } catch (e) {}
+    try { if (typeof UmeboshiAskAuthGetToken === "function") { var t = UmeboshiAskAuthGetToken(); if (t) return t; } } catch (e2) {}
+    return "";
+  }
+  /* 保存時の値を入力欄へ戻す。空欄は既定に戻った状態なので空のまま見せる。 */
+  function loadConnectionInputs() {
+    var urlEl = byId("umeboshi-ask-worker-url");
+    if (urlEl) urlEl.value = readWorkerUrl();
+    var tokenEl = byId("umeboshi-ask-worker-token");
+    if (tokenEl) tokenEl.value = readWorkerToken();
+  }
+  /* 保存は change（フォーカスが外れる確定）で行う。壊れた URL は空＝既定に戻し、
+     入力を既定値で埋め直して知らせる。トークンは前後空白を落として保存する。 */
+  function wireConnectionInputs() {
+    var urlEl = byId("umeboshi-ask-worker-url");
+    if (urlEl) {
+      urlEl.addEventListener("change", function() {
+        var typed = trim(urlEl.value);
+        var v = normalizeWorkerUrl(typed);
+        var note = byId("umeboshi-ask-worker-url-note");
+        if (v) {
+          storeSet(WORKER_URL_KEY, v);
+          urlEl.value = v;
+          if (note) note.textContent = "";
+        } else {
+          /* 空欄は既定に戻すだけ。壊れた値が入っていたときだけ知らせる。 */
+          storeDel(WORKER_URL_KEY);
+          urlEl.value = "";
+          if (note) note.textContent = typed === "" ? "" : txNow().workerUrlInvalid;
+        }
+        updateMenuSubs();
+      });
+    }
+    var tokenEl = byId("umeboshi-ask-worker-token");
+    if (tokenEl) {
+      tokenEl.addEventListener("change", function() {
+        var v = trim(tokenEl.value);
+        if (v) {
+          storeSet(WORKER_TOKEN_KEY, v);
+          tokenEl.value = v;
+        } else {
+          storeDel(WORKER_TOKEN_KEY);
+        }
+        var note = byId("umeboshi-ask-worker-token-note");
+        if (note) note.textContent = v ? txNow().workerTokenSaved : "";
+        updateMenuSubs();
+      });
+    }
+  }
+  /* ---------- S10 の残量表示・超過ブロック・402 は module 側（OS5a）。 ----------
+     netFetch は base のまま（モデル一覧・chat・認証が使う）。接続先の解決は
+     #256 OS2b / #258 OS2c の currentApiBase()（設定 > 外部フック > 既定）に寄せ、
+     読み込み時の apiBase 変数は持たない。
+     module は script シームの中で lastUsage・creditBlocked・fetchUsage を宣言し、
+     base の modelBalance() と updateSendEnabled() は typeof ガードで module の
+     有無をそのまま拾う（module が無い base では常に未接続として動く）。 */
+  function netFetch() { try { if (root && root.fetch) return root.fetch; } catch (e) {} if (typeof fetch !== "undefined") return fetch; return null; }
+  /* ---------- #76: 外部起動ブロック時の手運び導線（URL表示＋コピー） ----------
+     AnkiDroidは初期設定でカードからの外部起動を止める（解除はadvanced settingsのみ。カードJSからは変更不可）。
+     そのため自動起動は試すが、成否をカード側から判定できないのでURLを必ず画面に残し、コピーできるようにする。 */
+  function tryOpenExternal(url) {
+    try { if (root && typeof root.open === "function") { root.open(url, "_blank", "noopener"); return; } } catch (e) {}
+    try { if (typeof window !== "undefined" && typeof window.open === "function") window.open(url, "_blank", "noopener"); } catch (e2) {}
+  }
+  /* #250 Desktop のコピーはコンパニオン add-on の Python 橋で OS クリップボードへ書く。
+     QtWebEngine は navigator.clipboard.writeText を permission 要求に通すが、
+     Anki はその要求に答えない（aqt/webview.py に permission handler が無い。
+     実測: QtWebEngine 6.11.2 / Chromium 140、http://127.0.0.1 配信・focus 済みページで
+     writeText() の Promise は沈黙したまま settled せず、document.execCommand("copy") は false。
+     つまり Web 側 API だけでは Desktop ではコピーできない。 */
+  /* ブリッジが true を返したら成功。null/false（add-on 未同梱の既定handler）は
+     Web 側経路に続けてよいことを意味する。応答が来ない場合も Web 側経路に続ける:
+     pycmd を持つが答えない環境（未知のモバイルシム等。AnkiDroid には pycmd 自体が
+     無いことを実測済み、AnkiMobile は確かめられない）でボタンが無音に戻るのを防ぐ。 */
+  function copyViaBridge(text, done) {
+    var send;
+    try {
+      if (typeof root.pycmd !== "function") return false;
+      send = root.pycmd;
+    } catch (e0) { return false; }
+    var settled = false;
+    var timer = null;
+    function once(ok) {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) { try { clearTimeout(timer); } catch (e3) {} }
+      done(ok);
+    }
+    try {
+      timer = setTimeout(function () { once(false); }, CLIPBOARD_WAIT_MS);
+      send.call(root, "umeboshi-ask:addon-clipboard:" + text, function (res) { once(res === true); });
+    } catch (e4) {
+      once(false);
+    }
+    return true;
+  }
+  /* 同期の execCommand を先に試す。クリックと同じタスクなので user activation が残っており、
+     非同期 API が permission 待ちで沈黙する環境（#250）でもここで決着する。 */
+  function copyViaExecCommand(text) {
+    var ok = false;
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "readonly");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      if (document.body && document.body.appendChild) document.body.appendChild(ta);
+      if (typeof ta.select === "function") ta.select();
+      ok = (typeof document.execCommand === "function") ? !!document.execCommand("copy") : false;
+      if (document.body && document.body.removeChild) document.body.removeChild(ta);
+    } catch (e) { ok = false; }
+    return ok;
+  }
+  /* 非同期 clipboard API（ブラウザー・AnkiDroid の WebView 用）。
+     permission 待ちで Promise が沈黙し続ける環境があるので（#250 実測）、
+     待ちには上限を付ける。黙ったままのボタンを出さないため。 */
+  var CLIPBOARD_WAIT_MS = 600;
+  function copyViaClipboardApi(text, finish) {
+    var settled = false;
+    var timer = null;
+    function once(ok) {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) { try { clearTimeout(timer); } catch (e3) {} }
+      finish(ok);
+    }
+    try {
+      timer = setTimeout(function () { once(false); }, CLIPBOARD_WAIT_MS);
+      var clip = root.navigator && root.navigator.clipboard;
+      if (clip && typeof clip.writeText === "function") {
+        var p = clip.writeText(text);
+        if (p && typeof p.then === "function") {
+          p.then(function () { once(true); }, function () { once(false); });
+          return;
+        }
+        once(true);
+        return;
+      }
+    } catch (e2) {}
+    once(false);
+  }
+  function copyToClipboard(text, done) {
+    var settled = false;
+    function finish(ok) { if (settled) return; settled = true; done(ok); }
+    /* 1) Desktop: pycmd ブリッジ（Web の permission を介さず OS クリップボードへ直書き）。 */
+    if (copyViaBridge(text, function (ok) {
+      if (ok) { finish(true); return; }
+      copyViaWebApis(text, finish);
+    })) return;
+    copyViaWebApis(text, finish);
+  }
+  function copyViaWebApis(text, finish) {
+    /* 2) 同期 execCommand。成功すれば非同期 API は触らない。 */
+    if (copyViaExecCommand(text)) { finish(true); return; }
+    /* 3) 非同期 clipboard API。 */
+    copyViaClipboardApi(text, finish);
+  }
+  /* ---------- #250 Copy URL の手運び popup（モデルpopupと同じ作り） ----------
+     AnkiDroidは初期設定でカードからの外部起動を止める（解除はadvanced settingsのみ。カードJSからは変更不可）。
+     そのため自動起動は試むが、成否をカード側から判定できないのでURLを必ず popup に残し、コピーできるようにする。
+     kind は "login"。module（OS5a）は "billing" の枝を足す。文面は押下時点の表示言語から引く。 */
+  var lastUrlKind = "";
+  function urlPopupStrings(kind) {
+    /* kind "billing" の文面は module（OS5a）が urlPopupStrings に足す。 */
+    var t = txNow();
+    return {
+      title: t.loginUrlAria, note: t.loginFallbackNote,
+      inputAria: t.loginUrlAria, copy: t.loginCopy,
+      copied: t.loginCopied, fail: t.loginCopyFail,
+    };
+  }
+  /* 開いている popup の文面を現在の言語で引き直す（applyLang から呼ぶ）。
+     開いていたときだけ true。閉じている間は入力値を触らない（既定文面は呼び側が敷く）。 */
+  function refreshUrlPopupStrings() {
+    var popup = byId("umeboshi-ask-url-popup");
+    if (!popup || popup.hidden || !lastUrlKind) return false;
+    var input = byId("umeboshi-ask-url-input");
+    applyUrlPopupStrings(lastUrlKind, input ? input.value : "");
+    return true;
+  }
+  function applyUrlPopupStrings(kind, url) {
+    var s = urlPopupStrings(kind);
+    var title = byId("umeboshi-ask-url-title");
+    if (title) title.textContent = s.title;
+    var sheet = byId("umeboshi-ask-url-sheet");
+    if (sheet) sheet.setAttribute("aria-label", s.title);
+    var note = byId("umeboshi-ask-url-note");
+    if (note) note.textContent = s.note;
+    var input = byId("umeboshi-ask-url-input");
+    if (input) { input.value = url || ""; input.setAttribute("aria-label", s.inputAria); }
+    var btn = byId("umeboshi-ask-url-copy");
+    if (btn) btn.textContent = s.copy;
+    var st = byId("umeboshi-ask-url-copy-status");
+    if (st) st.textContent = "";
+  }
+  function openUrlPopup(kind, url) {
+    lastUrlKind = kind === "billing" ? "billing" : "login";
+    applyUrlPopupStrings(lastUrlKind, url);
+    var popup = byId("umeboshi-ask-url-popup");
+    if (popup) popup.hidden = false;
+  }
+  function closeUrlPopup() {
+    var popup = byId("umeboshi-ask-url-popup");
+    if (popup && !popup.hidden) popup.hidden = true;
+    /* 課金URLは15分・1回限りの使い捨て。閉じたら欄を空にする（古いURLを残さない）。 */
+    var input = byId("umeboshi-ask-url-input");
+    if (input) input.value = "";
+    var st = byId("umeboshi-ask-url-copy-status");
+    if (st) st.textContent = "";
+    lastUrlKind = "";
+  }
+  /* popup 内のコピーボタン。貼る文面は押した時点の表示言語と kind から引く。 */
+  function wireUrlCopyButton() {
+    var btn = byId("umeboshi-ask-url-copy");
+    if (!btn) return;
+    btn.addEventListener("click", function() {
+      var kind = lastUrlKind || "login";
+      var s = urlPopupStrings(kind);
+      var input = byId("umeboshi-ask-url-input");
+      var st = byId("umeboshi-ask-url-copy-status");
+      var url = input && input.value ? input.value : "";
+      if (!url) { if (st) st.textContent = s.fail; return; }
+      copyToClipboard(url, function(ok) { if (st) st.textContent = ok ? s.copied : s.fail; });
+    });
+  }
+  /* 残高切れの誘導文・リンク・copy／残量表示・請求管理・402 は module 側（OS5a）。
+     base にはシームだけを残す。fetchUsage はmodule が宣言するので openSettings 側は
+     typeof で呼ぶ。 */
+  /* ---------- 匿名ゲート。ログインが要る入口は匿名には出さない ---------- */
+  /* base は loggedInState の置き場だけを持つ。表示の切替は module が包んで足す。 */
+  /* module が無い base では export/import は隠したまま・hint は出したままになる。 */
+  var loggedInState = false;
+  function refreshLoginGatedUI() {}
+  function syncAccountStatus() {
+    refreshLoginGatedUI();
+  }
+  function openSettings() {
+    settingsModal.hidden = false;
+    /* #76 課金URLは15分・1回限りの使い捨て。モーダルを開き直したら古いURLを見せない。 */
+    closeUrlPopup();
+    syncAccountStatus();
+    setTab(currentTab || "general");
+    buildAllMenus();
+    /* #256 OS2b: 接続先とトークンは保存時の値を入力欄へ戻す（既定表示はしない）。 */
+    loadConnectionInputs();
+    /* 残量の取得は module（OS5a）。module が無い base では何もしない。 */
+    if (typeof fetchUsage === "function") fetchUsage();
+  }
+  function closeSettings() { settingsModal.hidden = true; }
+  /* ---------- S5 の土台: Refresh の置き場と素通しの authFetch ---------- */
+  /* login の実体（redeem・refresh・状態表示）は module が持つ（OS5c #265）。 */
+  /* base は bearer 解決と needLogin の口だけを残し、401 の救済は試さない。 */
+  var REFRESH_KEY = "umeboshi-ask:refresh:v1";
+  function isAnkiDroid() { try { if (root && root.AnkiDroidJS) return true; } catch (e) {} try { if (/Android/i.test((root.navigator && root.navigator.userAgent) || "")) return true; } catch (e2) {} return false; }
+  function authHttp() { return netFetch(); }
+  function authFetch(path, options) {
+    options = options || {};
+    var headers = {};
+    for (var k in options.headers) headers[k] = options.headers[k];
+    var bearer = bearerToken();
+    if (bearer) headers["Authorization"] = "Bearer " + bearer;
+    return authHttp()(currentApiBase() + path, { method: options.method || "GET", headers: headers, body: options.body });
+  }
+  function setAuthStatus(text) { var el = byId("umeboshi-ask-auth-status"); if (el) el.textContent = text; var tab = byId("umeboshi-ask-account-status"); if (tab) tab.textContent = el ? el.textContent : text; try { updateMenuSubs(); } catch (e2) {} }
+  function setLoggedIn(on) {
+    loggedInState = !!on;
+    refreshLoginGatedUI();
+  }
+  root.UmeboshiAskAuth = {
+    authFetch: authFetch,
+    getAccessToken: function() { return ""; },
+    refreshNow: function() { return Promise.resolve(false); }
+  };
+  /* 401 の受け口: module が handleExpired を包んで refresh 破棄を足す。 */
+  /* base 単体では何もしない（OS2c: 自己ホストでは refresh を試さない）。 */
+  function handleExpired() { return false; }
+  /* ---------- S12: 設定export/import（別端末移行・Bearer必須・匿名はボタン非表示） ---------- */
+  /* 設定移行の文面は module が持つ。base は読口だけを用意する。 */
+  function migrateBusyExportText() { return txNow().migrateBusyExport; }
+  function migrateDoneExportText() { return txNow().migrateDoneExport; }
+  function migrateExpiredText() { return txNow().migrateExpired; }
+  function migrateFailExportText() { return txNow().migrateFailExport; }
+  function migrateBusyImportText() { return txNow().migrateBusyImport; }
+  function migrateDoneImportText() { return txNow().migrateDoneImport; }
+  function migrateSavedAtText() { return txNow().migrateSavedAt; }
+  function migrateNoSettingsText() { return txNow().migrateNoSettings; }
+  function migrateFailImportText() { return txNow().migrateFailImport; }
+  function migrateMsg(text) {
+    var st = byId("umeboshi-ask-migrate-status");
+    if (st) st.textContent = text;
+    updateMenuSubs();
+  }
+  function exportSettings() {
+    migrateMsg(typeof migrateBusyExportText === "function" ? migrateBusyExportText() : txNow().migrateBusyExport);
+    var payload = UmeboshiAskSettings.load();
+    try { payload.efforts = loadEfforts(); } catch (e) {}
+    authFetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }).then(function(res) {
+      if (res.status === 401) throw new Error("needLogin");
+      if (!res.ok) throw new Error("bad status " + res.status);
+      return res.json();
+    }).then(function() {
+      migrateMsg(typeof migrateDoneExportText === "function" ? migrateDoneExportText() : txNow().migrateDoneExport);
+    }).catch(function(e) {
+      if (e && e.message === "needLogin") {
+        handleExpired();
+        migrateMsg(typeof migrateExpiredText === "function" ? migrateExpiredText() : txNow().migrateExpired);
+      } else {
+        migrateMsg(typeof migrateFailExportText === "function" ? migrateFailExportText() : txNow().migrateFailExport);
+      }
+    });
+  }
+  function importSettings() {
+    migrateMsg(typeof migrateBusyImportText === "function" ? migrateBusyImportText() : txNow().migrateBusyImport);
+    authFetch("/api/settings", { method: "GET" }).then(function(res) {
+      if (res.status === 401) throw new Error("needLogin");
+      if (res.status === 404) throw new Error("noSettings");
+      if (!res.ok) throw new Error("bad status " + res.status);
+      return res.json();
+    }).then(function(body) {
+      if (!body || typeof body.settings !== "object" || !body.settings) throw new Error("badPayload");
+      var merged = mergeSettings(body.settings);
+      UmeboshiAskSettings.save(merged);
+      try { saveEfforts(merged.efforts || {}); } catch (e2) {}
+      renderPromptEditors();
+      renderAskButtons();
+      applySendMode();
+      applyLang();
+      renderModelButton(selectedModelId() || storeGet(MODEL_KEY) || "");
+      renderModelList(selectedModelId() || storeGet(MODEL_KEY) || "");
+      buildAllMenus();
+      reopenDetail();
+      refreshSearch();
+      migrateMsg((typeof migrateDoneImportText === "function" ? migrateDoneImportText() : txNow().migrateDoneImport) + (body.updatedAt ? (typeof migrateSavedAtText === "function" ? migrateSavedAtText() : txNow().migrateSavedAt) + body.updatedAt + txNow().punctClose : "") + txNow().punctStop);
+    }).catch(function(e) {
+      if (e && e.message === "needLogin") {
+        handleExpired();
+        migrateMsg(typeof migrateExpiredText === "function" ? migrateExpiredText() : txNow().migrateExpired);
+      } else if (e && e.message === "noSettings") {
+        migrateMsg(typeof migrateNoSettingsText === "function" ? migrateNoSettingsText() : txNow().migrateNoSettings);
+      } else {
+        migrateMsg(typeof migrateFailImportText === "function" ? migrateFailImportText() : txNow().migrateFailImport);
+      }
+    });
+  }
+
+
+  /* ---------- S6: Thread保存（Message単位1件ずつ・titleなし・thinking保存なし） ----------
+     保存済みMessageはLLMに送らない（chat payloadは{question}のみ。ADR 0006）。
+     IndexedDBに即時保存し、ログイン中はKVにも保存（次回同カード表示でThread再表示）。
+     中断時は自動保存せず、未保存Messageとして残し保存ボタンを表示する。
+     上限は1 Thread 100 Message・1 Message 20000文字（question+answer合算）・index 50件（鯖側）。
+     匿名の保存押下はログイン案内。CardID未対応は赤バナー＋保存ブロック（S1互換）。
+     削除は復元なし・物理削除即時（確認のみ）。 */
+  var THREAD_MSG_MAX = 100;
+  var THREAD_MSG_CHARS = 20000;
+  var IDB_NAME = "umeboshi-ask";
+  var IDB_STORE = "threads";
+  var idbMem = {};
+  function threadCardId() {
+    var el = byId("umeboshi-ask-card-id");
+    return el && el.textContent ? trim(el.textContent) : "";
+  }
+  function isCardIdOk(id) {
+    if (typeof id !== "string") return false;
+    var t = trim(id);
+    if (t === "" || t.length > 128) return false;
+    // 注: Ankiはテンプレ内の二重波括弧をフィールド参照と解釈するため、JS内にそのリテラルは書けない。以下は unicode escape で回避する。
+    if (t.indexOf("\u007b\u007b") !== -1 || t.indexOf("\u007d\u007d") !== -1) return false;
+    return true;
+  }
+  function isThreadLoggedIn() { try { if (readWorkerToken()) return true; } catch (e0) {} try { if (typeof UmeboshiAskAuthGetToken === "function" && UmeboshiAskAuthGetToken()) return true; } catch (e1) {} return false; }
+  function threadNeedLoginText() { return txNow().threadNeedLogin; }
+  function threadNeedLoginShortText() { return txNow().threadNeedLoginShort; }
+  function threadSyncHintText() { return txNow().threadSyncHint; }
+  function threadBox() { return byId("umeboshi-ask-thread"); }
+  function threadList() { return byId("umeboshi-ask-thread-list"); }
+  function threadStatusEl() { return byId("umeboshi-ask-thread-status"); }
+  function setThreadStatus(t) { var el = threadStatusEl(); if (el) el.textContent = t || ""; }
+  var savedMessages = [];
+  /* ---------- IndexedDB（不可時はメモリフォールバック） ---------- */
+  function idbSupported() {
+    try { return typeof indexedDB !== "undefined" && !!indexedDB.open; } catch (e) { return false; }
+  }
+  function idbOpen() {
+    return new Promise(function(resolve) {
+      if (!idbSupported()) { resolve(null); return; }
+      try {
+        var req = indexedDB.open(IDB_NAME, 1);
+        req.onupgradeneeded = function() {
+          try {
+            var db = req.result;
+            if (db && !db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+          } catch (e) {}
+        };
+        req.onsuccess = function() { resolve(req.result || null); };
+        req.onerror = function() { resolve(null); };
+        req.onblocked = function() { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  }
+  function idbGet(cardId) {
+    return idbOpen().then(function(db) {
+      if (!db) return idbMem[cardId] || null;
+      return new Promise(function(resolve) {
+        try {
+          var tx = db.transaction(IDB_STORE, "readonly");
+          var st = tx.objectStore(IDB_STORE);
+          var rq = st.get(cardId);
+          rq.onsuccess = function() { resolve(rq.result || idbMem[cardId] || null); };
+          rq.onerror = function() { resolve(idbMem[cardId] || null); };
+        } catch (e) { resolve(idbMem[cardId] || null); }
+      });
+    });
+  }
+  function idbPut(thread) {
+    try { idbMem[thread.cardId] = thread; } catch (e) {}
+    return idbOpen().then(function(db) {
+      if (!db) return;
+      return new Promise(function(resolve) {
+        try {
+          var tx = db.transaction(IDB_STORE, "readwrite");
+          tx.objectStore(IDB_STORE).put(thread, thread.cardId);
+          tx.oncomplete = function() { resolve(); };
+          tx.onerror = function() { resolve(); };
+          tx.onabort = function() { resolve(); };
+        } catch (e) { resolve(); }
+      });
+    });
+  }
+  /* ---------- KV（Bearer必須。匿名は呼ばない） ---------- */
+  function kvPath(cardId) { return "/api/ask/threads/" + encodeURIComponent(cardId); }
+  function kvLoad(cardId) {
+    return authFetch(kvPath(cardId), { headers: { "x-card-id": cardId } }).then(function(res) {
+      if (!res.ok) throw new Error("load " + res.status);
+      return res.json();
+    });
+  }
+  function kvSave(cardId, question, answer) {
+    return authFetch(kvPath(cardId) + "/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-card-id": cardId },
+      body: JSON.stringify({ cardId: cardId, question: question, answer: answer })
+    }).then(function(res) {
+      if (res.status === 401) throw new Error("needLogin");
+      if (!res.ok) return res.json().catch(function() { return {}; }).then(function(b) {
+        throw new Error((b && b.error) || ("save " + res.status));
+      });
+      return res.json();
+    });
+  }
+  function kvPatch(cardId, id, question, answer) {
+    return authFetch(kvPath(cardId) + "/messages/" + encodeURIComponent(id), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-card-id": cardId },
+      body: JSON.stringify({ cardId: cardId, question: question, answer: answer })
+    }).then(function(res) {
+      if (res.status === 401) throw new Error("needLogin");
+      if (!res.ok) throw new Error("patch " + res.status);
+      return res.json();
+    });
+  }
+  function kvDel(cardId, id) {
+    return authFetch(kvPath(cardId) + "/messages/" + encodeURIComponent(id), {
+      method: "DELETE",
+      headers: { "x-card-id": cardId }
+    }).then(function(res) {
+      if (res.status === 401) throw new Error("needLogin");
+      if (!res.ok && res.status !== 404) throw new Error("delete " + res.status);
+      return res.json().catch(function() { return {}; });
+    });
+  }
+  /* ---------- #32 Thread折りたたみ（Message単位。初期は畳み・記憶なし） ---------- */
+  /* 畳み行はMessage題名、なければ質問文先頭50字＋更新時刻で代用する。 */
+  /* S6保存形式は変えない（title欄の追加は#28 Phase 2）。 */
+  var THREAD_TITLE_HEAD = 50;
+  /* #131 空質問の文言と更新時刻の括弧はUI言語に追従させる（括弧は#130の punctOpen/punctClose）。 */
+  function threadHeadText(m) {
+    var t = m && typeof m.title === "string" ? trim(m.title) : "";
+    if (t !== "") return t.slice(0, THREAD_TITLE_HEAD);
+    var x = txNow();
+    var q = m && typeof m.question === "string" ? trim(m.question).replace(/\s+/g, " ") : "";
+    var head = q !== "" ? q.slice(0, THREAD_TITLE_HEAD) : x.threadNoQ;
+    var u = m && typeof m.updatedAt === "string" ? m.updatedAt : "";
+    return head + (u !== "" ? x.punctOpen + u + x.punctClose : "");
+  }
+  root.UmeboshiAskThreadTitle = { head: threadHeadText, headLen: THREAD_TITLE_HEAD };
+
+  /* ---------- Thread描画（上部再表示・編集・削除） ---------- */
+  function renderThread() {
+    var box = threadBox();
+    var list = threadList();
+    if (!box || !list) return;
+    if (!isCardIdOk(threadCardId())) { box.hidden = true; return; }
+    box.hidden = false;
+    while (list.firstChild) list.removeChild(list.firstChild);
+    if (savedMessages.length === 0) {
+      var empty = document.createElement("div");
+      empty.className = "umeboshi-ask-thread-status";
+      empty.textContent = txNow().threadEmpty;
+      list.appendChild(empty);
+      return;
+    }
+    each(savedMessages, function(m) {
+      list.appendChild(threadItemNode(m));
+    });
+  }
+  function threadItemNode(m) {
+    var wrap = document.createElement("div");
+    wrap.className = "umeboshi-ask-thread-item";
+    var open = false;
+    var head = document.createElement("button");
+    head.type = "button";
+    head.className = "umeboshi-ask-thread-head";
+    head.setAttribute("aria-expanded", "false");
+    /* #131 開いた行の文言も一覧と同じ関数に寄せる（括弧・空質問が英語UIで日本語のまま出るのを防ぐ）。 */
+    function fullHead() {
+      var x = txNow();
+      var q = m && typeof m.question === "string" ? trim(m.question).replace(/\s+/g, " ") : "";
+      if (q === "") q = x.threadNoQ;
+      var u = m && typeof m.updatedAt === "string" ? m.updatedAt : "";
+      return q + (u !== "" ? x.punctOpen + u + x.punctClose : "");
+    }
+    var mark = document.createElement("span");
+    mark.className = "umeboshi-ask-thread-head-mark";
+    mark.textContent = "▶";
+    var label = document.createElement("span");
+    label.className = "umeboshi-ask-thread-head-text";
+    label.textContent = threadHeadText(m);
+    head.appendChild(mark);
+    head.appendChild(label);
+    var body = document.createElement("div");
+    body.className = "umeboshi-ask-thread-body";
+    body.hidden = true;
+    var a = document.createElement("div");
+    a.className = "umeboshi-ask-thread-a umeboshi-ask-md";
+    setAnswerHtml(a, m.answer);
+    var row = document.createElement("div");
+    row.className = "umeboshi-ask-row";
+    var edit = document.createElement("button");
+    edit.type = "button";
+    /* #215 アイコンは内蔵SVG（外部フォント・外部参照はしない）。setIconText が icon* 規則を共有する。 */
+    setIconText(edit, txNow().iconEdit, txNow().threadEdit);
+    edit.addEventListener("click", function() { startThreadEdit(wrap, m); });
+    var del = document.createElement("button");
+    del.type = "button";
+    setIconText(del, txNow().iconDelete, txNow().threadDelete);
+    del.addEventListener("click", function() { deleteThreadMessage(m, del); });
+    row.appendChild(edit);
+    row.appendChild(del);
+    body.appendChild(a);
+    body.appendChild(row);
+    head.addEventListener("click", function() {
+      open = !open;
+      body.hidden = !open;
+      mark.textContent = open ? "▼" : "▶";
+      label.textContent = open ? fullHead() : threadHeadText(m);
+      head.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    wrap.appendChild(head);
+    wrap.appendChild(body);
+    return wrap;
+  }
+  function startThreadEdit(wrap, m) {
+    while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+    if (wrap.classList && wrap.classList.add) wrap.classList.add("is-editing");
+    var t = txNow();
+    var qLabel = document.createElement("label");
+    qLabel.className = "umeboshi-ask-thread-edit-label";
+    qLabel.textContent = t.threadQ;
+    var qIn = document.createElement("textarea");
+    qIn.className = "umeboshi-ask-thread-edit-input umeboshi-ask-thread-edit-q";
+    qIn.rows = 3;
+    qIn.value = m.question;
+    qIn.setAttribute("aria-label", t.threadQ);
+    var aLabel = document.createElement("label");
+    aLabel.className = "umeboshi-ask-thread-edit-label";
+    aLabel.textContent = t.threadA;
+    var aIn = document.createElement("textarea");
+    aIn.className = "umeboshi-ask-thread-edit-input umeboshi-ask-thread-edit-a";
+    aIn.rows = 6;
+    aIn.value = m.answer;
+    aIn.setAttribute("aria-label", t.threadA);
+    var row = document.createElement("div");
+    row.className = "umeboshi-ask-row umeboshi-ask-thread-edit-actions";
+    var ok = document.createElement("button");
+    ok.type = "button";
+    ok.className = "umeboshi-ask-thread-save";
+    setIconText(ok, t.iconSave, t.threadSave);
+    var cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "umeboshi-ask-thread-cancel";
+    cancel.textContent = t.threadCancel;
+    cancel.addEventListener("click", renderThread);
+    ok.addEventListener("click", function() {
+      var nq = qIn.value;
+      var na = aIn.value;
+      if (trim(nq) === "") { setThreadStatus(txNow().threadEmptyQ); return; }
+      if ((nq.length + na.length) > THREAD_MSG_CHARS) {
+        setThreadStatus(txNow().threadTooLong);
+        return;
+      }
+      ok.disabled = true;
+      var cardId = threadCardId();
+      kvPatch(cardId, m.id, nq, na).then(function(body) {
+        var upd = body && body.message ? body.message : { id: m.id, question: nq, answer: na };
+        for (var i = 0; i < savedMessages.length; i++) {
+          if (savedMessages[i].id === m.id) savedMessages[i] = upd;
+        }
+        return idbPut({ cardId: cardId, messages: savedMessages, updatedAt: new Date().toISOString() });
+      }).then(function() {
+        setThreadStatus("");
+        renderThread();
+      }).catch(function(err) {
+        ok.disabled = false;
+        if (err && err.message === "needLogin") {
+          setThreadStatus(typeof threadNeedLoginText === "function" ? threadNeedLoginText() : txNow().threadNeedLogin);
+          return;
+        }
+        setThreadStatus(txNow().threadEditFail);
+      });
+    });
+    row.appendChild(ok);
+    row.appendChild(cancel);
+    wrap.appendChild(qLabel);
+    wrap.appendChild(qIn);
+    wrap.appendChild(aLabel);
+    wrap.appendChild(aIn);
+    wrap.appendChild(row);
+  }
+  function deleteThreadMessage(m, btn) {
+    var cardId = threadCardId();
+    try {
+      if (typeof confirm === "function" && !confirm(txNow().threadDeleteConfirm)) return;
+    } catch (e) {}
+    if (btn) btn.disabled = true;
+    kvDel(cardId, m.id).catch(function() {}).then(function() {
+      var next = [];
+      each(savedMessages, function(x) { if (x.id !== m.id) next.push(x); });
+      savedMessages = next;
+      return idbPut({ cardId: cardId, messages: savedMessages, updatedAt: new Date().toISOString() });
+    }).then(function() {
+      setThreadStatus("");
+      renderThread();
+    }).catch(function() {
+      if (btn) btn.disabled = false;
+      setThreadStatus(txNow().threadDeleteFail);
+    });
+  }
+  /* ---------- CurrentChat→保存（1件ずつ。thinkingは送らない） ---------- */
+  function saveOneMessage(question, answer, btn) {
+    var cardId = threadCardId();
+    if (!isCardIdOk(cardId)) {
+      setThreadStatus(txNow().threadNoCard);
+      return;
+    }
+    if (!isThreadLoggedIn()) {
+      setThreadStatus(typeof threadNeedLoginText === "function" ? threadNeedLoginText() : txNow().threadNeedLogin);
+      setAuthStatus(typeof threadNeedLoginShortText === "function" ? threadNeedLoginShortText() : txNow().threadNeedLoginShort);
+      return;
+    }
+    if (savedMessages.length >= THREAD_MSG_MAX) {
+      setThreadStatus(txNow().threadFull);
+      return;
+    }
+    if (trim(question) === "") { setThreadStatus(txNow().threadEmptyQ); return; }
+    if ((question.length + answer.length) > THREAD_MSG_CHARS) {
+      setThreadStatus(txNow().threadTooLong);
+      return;
+    }
+    if (btn) btn.disabled = true;
+    setThreadStatus(txNow().threadSaving);
+    kvSave(cardId, question, answer).then(function(body) {
+      var msg = body && body.message ? body.message : null;
+      if (!msg || !msg.id) throw new Error("bad response");
+      savedMessages.push(msg);
+      return idbPut({ cardId: cardId, messages: savedMessages, updatedAt: new Date().toISOString() });
+    }).then(function() {
+      setThreadStatus("");
+      renderThread();
+    }).catch(function(err) {
+      if (btn) btn.disabled = false;
+      if (err && err.message === "needLogin") {
+        setThreadStatus(typeof threadNeedLoginText === "function" ? threadNeedLoginText() : txNow().threadNeedLogin);
+        return;
+      }
+      if (err && err.message === "thread_full") {
+        setThreadStatus(txNow().threadFull);
+        return;
+      }
+      if (err && err.message === "message_too_long") {
+        setThreadStatus(txNow().threadTooLong);
+        return;
+      }
+      setThreadStatus(txNow().threadSaveFail);
+    });
+  }
+  function currentMessageNode(question, answer, thinking, interrupted) {
+    var box = byId("umeboshi-ask-messages");
+    if (!box) return;
+    var wrap = document.createElement("div");
+    wrap.className = "umeboshi-ask-msg";
+    var q = document.createElement("div");
+    q.className = "umeboshi-ask-msg-q";
+    q.textContent = question;
+    /* #87 中断 Message には生成済みの thinking を折りたたんで残す。保存も送信もしない（既存方針）。 */
+    var th = null;
+    if (trim(thinking) !== "") {
+      th = document.createElement("details");
+      th.className = "umeboshi-ask-msg-thinking";
+      var thSum = document.createElement("summary");
+      thSum.textContent = "thinking";
+      var thBody = document.createElement("div");
+      thBody.className = "umeboshi-ask-msg-thinking-body";
+      thBody.textContent = thinking;
+      th.appendChild(thSum);
+      th.appendChild(thBody);
+    }
+    /* #87 本文が空なら枠を作らない。左の線だけの空箱（旧UIの）を作らないため。 */
+    var a = null;
+    if (trim(answer) !== "") {
+      a = document.createElement("div");
+      a.className = "umeboshi-ask-msg-a umeboshi-ask-md";
+      setAnswerHtml(a, answer);
+    }
+    var st = document.createElement("div");
+    st.className = "umeboshi-ask-msg-status";
+    /* #87 保存できる本文が無いときは「保存ボタンで残せます」と言わない。 */
+    st.textContent = interrupted
+      ? (a ? txNow().statusInterrupted : txNow().statusAborted)
+      : "";
+    var row = document.createElement("div");
+    row.className = "umeboshi-ask-row";
+    var save = document.createElement("button");
+    save.type = "button";
+    setIconText(save, txNow().iconSave, txNow().threadSave);
+    save.addEventListener("click", function() { saveOneMessage(question, answer, save); });
+    row.appendChild(save);
+    wrap.appendChild(q);
+    if (th) wrap.appendChild(th);
+    if (a) wrap.appendChild(a);
+    wrap.appendChild(st);
+    wrap.appendChild(row);
+    box.appendChild(wrap);
+    if (box.scrollIntoView) { try { wrap.scrollIntoView(false); } catch (e) {} }
+  }
+  /* ---------- Thread読込（次回同カード表示で上部に再表示） ---------- */
+  function loadThreadOnOpen() {
+    var cardId = threadCardId();
+    if (!isCardIdOk(cardId)) { var b = threadBox(); if (b) b.hidden = true; return; }
+    var box = threadBox();
+    if (box) box.hidden = false;
+    setThreadStatus(txNow().threadLoading);
+    idbGet(cardId).then(function(local) {
+      if (local && Object.prototype.toString.call(local.messages) === "[object Array]") {
+        savedMessages = local.messages;
+        renderThread();
+      } else {
+        savedMessages = [];
+        renderThread();
+      }
+      if (!isThreadLoggedIn()) {
+        setThreadStatus(savedMessages.length === 0 ? "" : (typeof threadSyncHintText === "function" ? threadSyncHintText() : txNow().threadSyncHint));
+        return;
+      }
+      return kvLoad(cardId).then(function(body) {
+        var remote = body && Object.prototype.toString.call(body.messages) === "[object Array]" ? body.messages : [];
+        if (remote.length >= savedMessages.length) {
+          savedMessages = remote;
+          renderThread();
+          return idbPut({ cardId: cardId, messages: savedMessages, updatedAt: new Date().toISOString() });
+        }
+        setThreadStatus("");
+      }).catch(function() {
+        setThreadStatus("");
+      });
+    }).catch(function() {
+      savedMessages = [];
+      renderThread();
+      setThreadStatus("");
+    });
+  }
+  /* ---------- #26 streaming描画（随時レンダリング＋done確定。Q2逐次・Q6スロットル） ----------
+     生テキスト蓄積→スロットル描画→done確定の3段。未完成Markdownの跳ねを抑える。
+     MathJax typesetはdone時に限定（毎チャンク走らせない）。 */
+  function setAnswerHtml(el, md, withTypeset) {
+    if (!el) return;
+    el.innerHTML = renderMarkdown(md);
+    /* vm駆動テストのFakeElはinnerHTMLとtextContentが連動しない。空のときだけ生テキストを添える（実機の描画はinnerHTML）。 */
+    try { if (el.textContent === "" && el.children.length === 0) el.textContent = String(md == null ? "" : md); } catch (e) {}
+    if (withTypeset) { try { typesetMath(el); } catch (e2) {} }
+  }
+  var answerRaw = "";
+  var answerRenderTimer = null;
+  function scrollCurrentIntoView() {
+    try {
+      if (root.matchMedia && root.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    } catch (e) {}
+    try { if (streamStatus && streamStatus.scrollIntoView) streamStatus.scrollIntoView(false); } catch (e2) {}
+  }
+  function scheduleAnswerRender() {
+    if (!answerEl) return;
+    if (answerRenderTimer) return;
+    answerRenderTimer = setTimeout(function() {
+      answerRenderTimer = null;
+      setAnswerHtml(answerEl, answerRaw, false);
+      scrollCurrentIntoView();
+    }, 200);
+  }
+  function typesetMath(el) {
+    try {
+      if (root.MathJax && root.MathJax.typesetPromise) { root.MathJax.typesetPromise([el]); return; }
+      if (root.MathJax && root.MathJax.Hub && root.MathJax.Hub.Queue) { root.MathJax.Hub.Queue(["Typeset", root.MathJax.Hub, el]); return; }
+    } catch (e) {}
+  }
+  var currentBox = byId("umeboshi-ask-current");
+  var thinkingBox = byId("umeboshi-ask-thinking");
+  var thinkingBody = byId("umeboshi-ask-thinking-body");
+  var answerEl = byId("umeboshi-ask-answer");
+  var streamStatus = byId("umeboshi-ask-stream-status");
+  var streamAbort = null;
+  var streaming = false;
+  var currentQuestion = "";
+  var currentThinking = "";
+  var switchedShown = false;
+  function setStreamStatus(t) { if (streamStatus) streamStatus.textContent = t || ""; }
+  function resetCurrent(q) {
+    currentQuestion = q;
+    currentThinking = "";
+    answerRaw = "";
+    if (answerRenderTimer) { try { clearTimeout(answerRenderTimer); } catch (e) {} answerRenderTimer = null; }
+    if (thinkingBody) thinkingBody.textContent = "";
+    if (answerEl) { answerEl.innerHTML = ""; answerEl.textContent = ""; answerEl.className = "umeboshi-ask-md"; }
+    if (thinkingBox) { thinkingBox.hidden = true; thinkingBox.open = false; }
+    if (currentBox) currentBox.hidden = false;
+    var qEl = byId("umeboshi-ask-stream-q");
+    if (qEl) qEl.textContent = q || "";
+    switchedShown = false;
+    setStreamStatus("");
+  }
+  function setStreaming(on) {
+    streaming = on;
+    /* 旧停止ボタンは廃止。送信ボタンが停止を兼ねる。 */
+    updateSendEnabled();
+  }
+  function cardNum() {
+    try {
+      var m = document.body.className.match(/card(\d+)/);
+      return m ? m[1] : "0";
+    } catch (e) { return "0"; }
+  }
+  function cardField(id) {
+    var el = byId(id);
+    return el && el.textContent ? trim(el.textContent) : "";
+  }
+  function buildClozeInfo(raw) {
+    var num = cardNum();
+    var out = [];
+    try {
+      var re = /\{c(\d+)::([\s\S]*?)\}/g;
+      var m;
+      while ((m = re.exec(raw)) !== null && out.length < 5) {
+        var n = m[1];
+        var ans = (m[2] || "").replace(/\{\{.*?\}\}/g, "").slice(0, 120);
+        out.push(n === num ? ("c" + n + "（このカード）: " + ans) : ("c" + n + ": " + ans));
+      }
+    } catch (e) {}
+    return out.join("\n");
+  }
+  /* #85 freeText は送信ボタンだけ true。テンプレ5ボタンは入力欄を無視し、 */
+  /* {question} はそのボタンのラベル（設定上書き→UI言語→キー）で埋める。 */
+  function composeQuestion(key, freeText) {
+    var typed = (freeText && inputEl && inputEl.value) ? trim(inputEl.value) : "";
+    var prompt = null;
+    try { prompt = UmeboshiAskSettings.resolvePrompt(key); } catch (e) { prompt = null; }
+    var label = (prompt && prompt.label) || templateLabel(key);
+    var body = (prompt && prompt.body) || defaultComposeFallback();
+    var rawText = cardField("raw-text") || cardField("text");
+    var base = typed !== "" ? typed : label;
+    var q = body.replace(/\{question\}/g, base)
+      .replace(/\{text\}/g, rawText.slice(0, 2000))
+      .replace(/\{clozeInfo\}/g, buildClozeInfo(rawText))
+      .replace(/\{extra\}/g, cardField("extra").slice(0, 2000));
+    return { display: base, send: q };
+  }
+  function defaultComposeFallback() {
+    var lang = "ja";
+    try { lang = detectLang(UmeboshiAskSettings.load()).lang; } catch (e) {}
+    if (lang === "en") return DEFAULT_PROMPTS_FALLBACK;
+    return "「{question}」について説明してください。簡潔に、読むのが簡単な量で、15〜30秒以内に読めるように書いてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}";
+  }
+  function handleStreamLine(line) {
+    var t = trim(line);
+    if (t.indexOf("data:") !== 0) return;
+    var payload = trim(t.slice(5));
+    if (payload === "" || payload === "[DONE]") return;
+    var ev;
+    try { ev = JSON.parse(payload); } catch (e) { return; }
+    if (!ev || typeof ev.type !== "string") return;
+    if (ev.type === "thinking") {
+      if (typeof ev.delta === "string" && ev.delta !== "" && thinkingBody) {
+        currentThinking += ev.delta;
+        if (thinkingBox) thinkingBox.hidden = false;
+        thinkingBody.textContent += ev.delta;
+      }
+    } else if (ev.type === "content") {
+      if (typeof ev.delta === "string" && ev.delta !== "" && answerEl) {
+        answerRaw += ev.delta;
+        scheduleAnswerRender();
+      }
+    } else if (ev.type === "done") {
+      if (answerRenderTimer) { try { clearTimeout(answerRenderTimer); } catch (e) {} answerRenderTimer = null; }
+      if (answerEl) setAnswerHtml(answerEl, answerRaw, true);
+      /* #172 完了時の消費表示。charged が確定額（整数）。予約/実費のどちらかは Worker が決める。
+         文面は module の i18n。module が無い base では消費表示を出さない。 */
+      var spent = (typeof ev.charged === "number" && isFinite(ev.charged) && ev.charged > 0 && txNow().statusSpent)
+        ? txNow().statusSpent.replace("__N__", String(Math.ceil(ev.charged)))
+        : "";
+      setStreamStatus(spent);
+      scrollCurrentIntoView();
+    } else if (ev.type === "switched") {
+      if (!switchedShown && statusEl) {
+        switchedShown = true;
+        statusEl.textContent = txNow().modelSwitched + (ev.to ? ": " + ev.to : "");
+      }
+      try {
+        if (ev && typeof ev.to === "string" && ev.to !== "") {
+          currentModelId = ev.to;
+          storeSet(MODEL_KEY, ev.to);
+          if (typeof ev.effort === "string" && ev.effort !== "") setEffortFor(ev.to, ev.effort);
+          renderModelButton(ev.to);
+          renderModelList(ev.to);
+        }
+      } catch (eSw) {}
+    } else if (ev.type === "error") {
+      var errSpent = "";
+      try {
+        if (typeof ev.charged === "number" && isFinite(ev.charged) && ev.charged > 0 && txNow().statusSpent) {
+          errSpent = txNow().statusSpent.replace("__N__", String(Math.ceil(ev.charged)));
+        }
+      } catch (eSpent) {}
+      /* #94: Workerの code を UI言語の文面で見る。cut off と 空回答は別物。 */
+      var errText = (ev.code === "truncated")
+        ? txNow().statusTruncated
+        : (ev.code === "empty_answer"
+            ? txNow().statusEmptyAnswer
+            : (ev.message || ev.code || "stream error"));
+      setStreamStatus(txNow().statusError + errText + (errSpent !== "" ? " " + errSpent : ""));
+    }
+  }
+  function pumpStream(reader, decoder, onEnd) {
+    var buffer = "";
+    function pump() {
+      return reader.read().then(function(result) {
+        if (result.done) {
+          try { buffer += decoder.decode(); } catch (e) {}
+          if (trim(buffer) !== "") handleStreamLine(buffer);
+          onEnd(null);
+          return;
+        }
+        try { buffer += decoder.decode(result.value, { stream: true }); } catch (e) {}
+        var lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (var i = 0; i < lines.length; i++) handleStreamLine(lines[i]);
+        return pump();
+      }, function(err) { onEnd(err || new Error("read error")); });
+    }
+    return pump();
+  }
+  function pushCurrentToMessages(interrupted) {
+    var q = currentQuestion;
+    var a = answerRaw || "";
+    /* #87 thinking は中断した Message にだけ載せる。完了した Message には載せない。 */
+    var th = interrupted ? (currentThinking || "") : "";
+    /* #87 生成が0のまま止められたときは Message を作らず、CurrentChat の中断表示1行に任せる。 */
+    if (interrupted && trim(a) === "" && trim(th) === "") return;
+    if (trim(q) === "" && trim(a) === "") return;
+    currentMessageNode(q, a, th, interrupted);
+    if (currentBox) currentBox.hidden = true;
+  }
+  function startAskFlow(key, freeText) {
+    if (streaming || !currentBox) return;
+    var f = netFetch();
+    if (!f) { setStreamStatus(txNow().sendFailFetch); return; }
+    var composed = composeQuestion(key, freeText);
+    if (trim(composed.display) === "") return;
+    if (typeof creditBlocked !== "undefined" && creditBlocked) {
+      setStreamStatus(txNow().noBalance);
+      return;
+    }
+    resetCurrent(composed.display);
+    setStreaming(true);
+    setStreamStatus(txNow().statusThinking);
+    var headers = { "Content-Type": "application/json" };
+    try { var bearer = bearerToken(); if (bearer) headers["Authorization"] = "Bearer " + bearer; } catch (e) {}
+    try { var cid = threadCardId(); if (cid && isCardIdOk(cid)) headers["x-card-id"] = cid; } catch (eCard) {}
+    var chatBody = { question: composed.send };
+    try { var mid = selectedModelId(); if (mid !== "") { chatBody.model = mid; var meff = selectedEffortFor(mid); if (meff !== "") chatBody.effort = meff; } } catch (e0) {}
+    var init = { method: "POST", headers: headers, body: JSON.stringify(chatBody) };
+    if (typeof AbortController !== "undefined") {
+      streamAbort = new AbortController();
+      init.signal = streamAbort.signal;
+    }
+    f(currentApiBase() + "/api/ask/chat", init).then(function(res) {
+      if (res.status === 402 && root.UmeboshiAskHandlePayment) {
+        return res.json().catch(function() { return {}; }).then(function(body) {
+          root.UmeboshiAskHandlePayment(body || {});
+          throw new Error("payment_required");
+        });
+      }
+      /* #258 OS2c: 設定のアクセストークンが Worker と違うと 401 で黙って落ちる。
+         案内をエリアへ出して、既定 endpoint の汎用失敗文とは別の理由として示す。 */
+      if (res.status === 401 && readWorkerToken()) {
+        setStreamStatus(txNow().workerTokenInvalid);
+        throw new Error("worker_token_invalid");
+      }
+      if (!res.ok) {
+        return res.text().then(function(text) {
+          var message = txNow().sendFail + res.status + ")";
+          var parsed = null;
+          try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+          if (parsed && parsed.error === "unknown_model" && typeof parsed.fallback === "string" && parsed.fallback !== "") {
+            try { renderModelOptions(parsed.fallback); } catch (e2) {}
+            switchModelNotice(parsed.fallback);
+            setStreamStatus(txNow().sendFailUnknown);
+            throw new Error("unknown_model_switched");
+          }
+          if (parsed && parsed.error === "invalid_effort") {
+            setStreamStatus(txNow().effortInvalid);
+            throw new Error("invalid_effort");
+          }
+          if (parsed && parsed.error) message = parsed.error;
+          /* #88 Workerの502 bodyにはupstreamPreview（秘密を伏せた上流の理由）が入る。
+             捨てると「LLM upstream error」だけになり、原因がカードに届かない。 */
+          var upPreview = (parsed && typeof parsed.upstreamPreview === "string") ? trim(parsed.upstreamPreview) : "";
+          if (upPreview !== "") message = message + " / " + upPreview.slice(0, 240);
+          throw new Error(message);
+        });
+      }
+      if (!res.body || typeof res.body.getReader !== "function") {
+        return res.text().then(function(text) {
+          var lines = text.split("\n");
+          for (var i = 0; i < lines.length; i++) handleStreamLine(lines[i]);
+          setStreamStatus("");
+        });
+      }
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      return pumpStream(reader, decoder, function(err) {
+        if (err) throw err;
+        if (streamStatus && streamStatus.textContent === txNow().statusThinking) setStreamStatus("");
+      });
+    }).catch(function(err) {
+      if (err && err.name === "AbortError") {
+        setStreamStatus(txNow().statusAborted);
+      } else if (err && err.message === "invalid_effort") {
+        setStreamStatus(txNow().effortInvalid);
+      } else if (err && err.message !== "payment_required" && err.message !== "unknown_model_switched" && err.message !== "worker_token_invalid") {
+        setStreamStatus(txNow().statusError + (err && err.message ? err.message : err));
+      }
+    }).then(function() {
+      var wasAbort = streamStatus && streamStatus.textContent === txNow().statusAborted;
+      var isErr = streamStatus && streamStatus.textContent.indexOf(txNow().statusError) === 0;
+      streamAbort = null;
+      setStreaming(false);
+      refreshSendGates();
+      if (!isErr) pushCurrentToMessages(!!wasAbort);
+      // エラー時はstream-status（#umeboshi-ask-current内）の可視化のため隠さない。503等も表示される。
+    });
+  }
+  (function wireAskButtons() {
+    var box = byId("umeboshi-ask-buttons");
+    if (box && box.addEventListener) {
+      box.addEventListener("click", function(e) {
+        var t = (e && e.target) || null;
+        while (t && t !== box && !(t.getAttribute && (t.getAttribute("data-ask") || t.getAttribute("data-ask-custom")))) {
+          t = t.parentNode;
+        }
+        if (!t || t === box) return;
+        var key = t.getAttribute("data-ask") || t.getAttribute("data-ask-custom");
+        sendThroughGate(key, false);
+      });
+    }
+    if (sendBtn && sendBtn.addEventListener) {
+      sendBtn.addEventListener("click", function() {
+        /* 送信中はこのボタンが停止ボタンになる。 */
+        if (typeof streaming !== "undefined" && streaming) {
+          if (streamAbort) streamAbort.abort();
+          return;
+        }
+        /* #25 空入力は送信せず、同意ダイアログも開かない。 */
+        var typed = inputEl && inputEl.value ? trim(inputEl.value) : "";
+        if (typed === "") { dropPendingAsk(); return; }
+        /* #85 送信ボタンのみ freeText。入力欄の文章を {question} に乗せる。 */
+        sendThroughGate("what", true);
+      });
+    }
+  })();
+  root.UmeboshiAskThread = {
+    load: loadThreadOnOpen,
+    save: saveOneMessage,
+    getMessages: function() { return savedMessages; }
+  };
+  loadThreadOnOpen();
+
+  /* ---------- #25 単一ゲート: CardIDバナー ---------- */
+  refreshSendGates();
+
+  var rawCardId = "";
+  var cardIdEl = byId("umeboshi-ask-card-id");
+  if (cardIdEl && cardIdEl.textContent) rawCardId = trim(cardIdEl.textContent);
+  if (rawCardId === "" || rawCardId.indexOf("\u007b\u007b") !== -1) {
+    banner.hidden = false;
+    saveBtn.disabled = true;
+    saveBtn.title = txNow().cardBannerShort;
+  } else {
+    banner.hidden = true;
+  }
+
+  /* ---------- #127 AnkiDroid origin リセット検知（案内のみ。保存も送信も止めない） ---------- */
+  /* Desktop はポートが変わらないので対象外（Q2=a）。既存の add-on 導線に任せる。 */
+  (function checkStorageReset() {
+    var el = byId("umeboshi-ask-storage-banner");
+    try {
+      var reset = isAnkiDroid() && storageWasReset();
+      markPort();
+      if (el) {
+        el.textContent = txNow().storageReset;
+        el.hidden = !reset;
+      }
+    } catch (e) { if (el) el.hidden = true; }
+  })();
+
+  /* ---------- S7配線 ---------- */
+  renderAskButtons();
+  renderPromptEditors();
+  applySendMode();
+  refreshSendGates();
+  buildAllMenus();
+  showTabs();
+
+  byId("umeboshi-ask-settings-btn").addEventListener("click", openSettings);
+  byId("umeboshi-ask-settings-close").addEventListener("click", closeSettings);
+  settingsModal.addEventListener("click", function(e) {
+    if (e.target === settingsModal) closeSettings();
+  });
+  document.addEventListener("keydown", function(e) {
+    e = e || root.event;
+    var key = e.key || e.keyCode;
+    if ((key === "Escape" || key === 27) && !settingsModal.hidden) closeSettings();
+    if ((key === "Escape" || key === 27)) { try { closeModelPopup(); } catch (e2) {} }
+  });
+  each(qsa("#umeboshi-ask-settings-tabs .umeboshi-ask-tab"), function(tab) {
+    tab.addEventListener("click", function() { setTab(tab.getAttribute("data-tab")); });
+  });
+  if (detailBack) detailBack.addEventListener("click", closeDetail);
+  if (searchInput) {
+    searchInput.addEventListener("input", function() {
+      var clearBtn = byId("umeboshi-ask-search-clear");
+      if (clearBtn) clearBtn.hidden = (trim(searchInput.value) === "");
+      runSearch(searchInput.value);
+    });
+  }
+  var searchClear = byId("umeboshi-ask-search-clear");
+  if (searchClear) {
+    searchClear.addEventListener("click", function() {
+      if (searchInput) searchInput.value = "";
+      searchClear.hidden = true;
+      runSearch("");
+      if (searchInput && searchInput.focus) searchInput.focus();
+    });
+  }
+  each(qsa('input[name="umeboshi-ask-sendmode"]'), function(r) {
+    r.addEventListener("change", function() {
+      var cur = UmeboshiAskSettings.load();
+      cur.sendMode = r.value;
+      UmeboshiAskSettings.save(cur);
+      applySendMode();
+      updateMenuSubs();
+    });
+  });
+  /* #256 OS2b: 接続先Workerとアクセストークンの保存・検証。 */
+  wireConnectionInputs();
+  each(qsa('input[name="umeboshi-ask-lang"]'), function(r) {
+    r.addEventListener("change", function() {
+      var cur = UmeboshiAskSettings.load();
+      cur.lang = r.value;
+      UmeboshiAskSettings.save(cur);
+      renderAskButtons();
+      renderPromptEditors();
+      applyLang();
+      buildAllMenus();
+      reopenDetail();
+      refreshSearch();
+      /* #131 言語を切り替えたら保存済み解説の見出しも描き直す（日本語のまま残さない）。 */
+      renderThread();
+    });
+  });
+  byId("umeboshi-ask-reset-prompts").addEventListener("click", function() {
+    var cur = UmeboshiAskSettings.load();
+    var langSrc = defaultPromptsFor(detectLang(cur).lang);
+    each(DEFAULT_KEYS, function(k) { cur.prompts[k] = { label: "", body: langSrc[k] }; });
+    UmeboshiAskSettings.save(cur);
+    renderPromptEditors();
+    renderAskButtons();
+    buildAllMenus();
+    reopenDetail();
+    refreshSearch();
+  });
+  byId("umeboshi-ask-reset-all").addEventListener("click", function() {
+    storeDel(SETTINGS_KEY);
+    renderPromptEditors();
+    renderAskButtons();
+    applySendMode();
+    applyLang();
+    buildAllMenus();
+    reopenDetail();
+    refreshSearch();
+    /* #131 設定全消去で言語も戻るため、Thread見出しを新しい言語で描き直す。 */
+    renderThread();
+  });
+
+  /* 残量の再取得・請求管理の導線は module（OS5a）が script シームで配線する。 */
+  /* #250 Copy URL popup のコピーボタン・✕・backdrop。ラベルは applyLang で日英に追従する。 */
+  wireUrlCopyButton();
+  var urlCloseBtn = byId("umeboshi-ask-url-close");
+  if (urlCloseBtn) urlCloseBtn.addEventListener("click", function() { closeUrlPopup(); });
+  var urlBackdrop = byId("umeboshi-ask-url-backdrop");
+  if (urlBackdrop) urlBackdrop.addEventListener("click", function() { closeUrlPopup(); });
+  var exportBtn = byId("umeboshi-ask-export-btn");
+  if (exportBtn) exportBtn.addEventListener("click", exportSettings);
+  var importBtn = byId("umeboshi-ask-import-btn");
+  if (importBtn) importBtn.addEventListener("click", importSettings);
+  refreshLoginGatedUI();
+  /* ログイン配線は module（OS5c）が持つ。module が無い base では何もしない。 */
+  if (typeof wireLoginBoot === "function") wireLoginBoot();
+
+  /* ---------- S8: モデルpopup（#47 非native・カード常設・安い順＋残量不足は選択不可） ----------
+     一覧は GET /api/ask/models が正（bundle fallback時は全件選択可）。
+     残量はS10のlastUsage.remainingを見る。不明時は全件選択可
+     （markSelectable相当のフロント結線）。選択はbest-effortで永続化し、
+     Desktopのoff-the-recordでは安い選択可モデルに落ち着く。
+     #47: AnkiのWebViewでnative selectのpickerが開かないため、
+     button＋fixed popup（granumorphism）で選ぶ。送信payloadはchatBody.model＋effort。
+     #66: Effortは子popupでそのモデルの取り揃えだけ出す。記憶はumeboshi-ask:effort:v1の辞書。
+     未指定時は各モデルのdefault effort（選択なしは送らない）。自動切替はswitched.effortで表示更新。 */
+  var MODEL_KEY = "umeboshi-ask:model:v1";
+  var EFFORT_KEY = "umeboshi-ask:effort:v1";
+  var modelSel = byId("umeboshi-ask-model");
+  var modelPopup = byId("umeboshi-ask-model-popup");
+  var modelList = byId("umeboshi-ask-model-list");
+  var modelCloseBtn = byId("umeboshi-ask-model-close");
+  /* #198 モデル一覧から4段階へ戻るボタン（arrow_back）。 */
+  var modelBackBtn = byId("umeboshi-ask-model-back");
+  var modelBackdrop = byId("umeboshi-ask-model-backdrop");
+  var effortPopup = byId("umeboshi-ask-effort-popup");
+  var effortList = byId("umeboshi-ask-effort-list");
+  var effortNote = byId("umeboshi-ask-effort-note");
+  var effortCloseBtn = byId("umeboshi-ask-effort-close");
+  /* #198 Effort 一覧からモデル一覧へ戻るボタン（arrow_back）。 */
+  var effortBackBtn = byId("umeboshi-ask-effort-back");
+  var effortBackdrop = byId("umeboshi-ask-effort-backdrop");
+  var effortSheetTitle = byId("umeboshi-ask-effort-sheet-title");
+  /* #198 4段階（ModelTier）popup。モデルボタンの受け口になり、詳細モデル選択で
+     モデルpopup（#47）へ渡す。 */
+  var tierPopup = byId("umeboshi-ask-tier-popup");
+  var tierList = byId("umeboshi-ask-tier-list");
+  var tierSheetTitle = byId("umeboshi-ask-tier-sheet-title");
+  var tierCloseBtn = byId("umeboshi-ask-tier-close");
+  var tierBackdrop = byId("umeboshi-ask-tier-backdrop");
+  var tierDetailBtn = byId("umeboshi-ask-tier-detail-btn");
+  var cachedPresets = [];
+  var cachedModels = [];
+  var currentModelId = "";
+  var effortTargetId = "";
+  function modelBalance() {
+    try {
+      if (typeof lastUsage !== "undefined" && lastUsage && typeof lastUsage.remaining === "number") return lastUsage.remaining;
+    } catch (e) {}
+    return null;
+  }
+  function modelPrice(m) {
+    var p = m ? Number(m.priceUsdPer1M) : NaN;
+    return isFinite(p) ? p : Infinity;
+  }
+  function sortModelsCheapFirst(models) {
+    return (models || []).slice().sort(function(a, b) { return modelPrice(a) - modelPrice(b); });
+  }
+  function modelShortName(m) {
+    var s = (m && (m.name || m.id)) || "";
+    var i = s.indexOf(":");
+    if (i >= 0) s = s.slice(i + 1);
+    s = s.replace(/^\s+|\s+$/g, "");
+    return s || ((m && m.id) || "");
+  }
+  function modelScore(m) {
+    var n = m ? Number(m.smartScore) : NaN;
+    if (!isFinite(n) || n === 0) return "";
+    return String(Math.round(n));
+  }
+  function modelScoreText(m) {
+    var sc = modelScore(m);
+    return sc === "" ? "" : "🧠" + sc;
+  }
+  /* #198 Effort 別の強さ。Worker の scores は計測できた Effort だけ持つので、
+     欠損は空にして呼び出し側が `—` を出す（推定は作らない）。 */
+  function effortScoreValue(m, v) {
+    var sc = m && m.scores ? m.scores[v] : undefined;
+    if (typeof sc !== "number" || !isFinite(sc)) return "";
+    return String(Math.round(sc));
+  }
+  /* #198 強さの記号をボタンへ足す。値が空のときは `—`（未計測）と読み上げを付ける。
+     モデル一覧と同じ見た目（.umeboshi-ask-model-score）を3面で共有する。 */
+  function appendScoreEl(btn, value) {
+    if (!btn) return;
+    var t = txNow();
+    if (value === "") {
+      var un = document.createElement("span");
+      un.className = "umeboshi-ask-model-score-unknown";
+      un.textContent = t.scoreUnknown;
+      un.setAttribute("aria-label", t.scoreUnknownAria);
+      btn.appendChild(un);
+      return;
+    }
+    var el = document.createElement("span");
+    el.className = "umeboshi-ask-model-score";
+    el.setAttribute("aria-label", t.smartScoreAria + value);
+    el.textContent = "🧠";
+    var num = document.createElement("span");
+    num.className = "umeboshi-ask-model-score-num";
+    num.textContent = value;
+    el.appendChild(num);
+    btn.appendChild(el);
+  }
+  function effortDisplayName(v) {
+    if (v === "" || v === null || v === undefined) return txNow().effortAuto;
+    return String(v).charAt(0).toUpperCase() + String(v).slice(1);
+  }
+  function modelLabel(m, selectable) {
+    var t = txNow();
+    var s = modelShortName(m);
+    var sc = modelScoreText(m);
+    if (sc !== "") s += " " + sc;
+    /* #198 目安クレジットは選ぶ画面に出さない（human 決定）。model＋Effort だけ。 */
+    var eff = m ? selectedEffortFor(m.id) : "";
+    if (eff !== "" && m && modelEfforts(m).length > 0) s += t.punctOpen + effortDisplayName(eff) + t.punctClose;
+    /* 残量不足の添え字は module の i18n。module が無い base では何も足さない。 */
+    if (!selectable && t.modelNoBalance) s += t.modelNoBalance;
+    return s;
+  }
+  function modelEfforts(m) {
+    if (!m || Object.prototype.toString.call(m.supportedEfforts) !== "[object Array]") return [];
+    var out = [];
+    for (var i = 0; i < m.supportedEfforts.length; i++) {
+      var v = m.supportedEfforts[i];
+      if (typeof v === "string" && v !== "" && out.indexOf(v) < 0) out.push(v);
+    }
+    return out;
+  }
+  function modelDefaultEffort(m) {
+    if (!m) return "";
+    var list = modelEfforts(m);
+    if (list.length === 0) return "";
+    if (typeof m.defaultEffort === "string" && list.indexOf(m.defaultEffort) >= 0) return m.defaultEffort;
+    if (list.indexOf("medium") >= 0) return "medium";
+    return list[0];
+  }
+  function loadEfforts() {
+    try {
+      var raw = storeGet(EFFORT_KEY);
+      if (!raw) return {};
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Object.prototype.toString.call(parsed) === "[object Array]") return {};
+      return parsed;
+    } catch (e) { return {}; }
+  }
+  function saveEfforts(map) {
+    try { storeSet(EFFORT_KEY, JSON.stringify(map || {})); } catch (e) {}
+  }
+  function storedEffortFor(modelId) {
+    try {
+      var map = loadEfforts();
+      var v = map[modelId];
+      return (typeof v === "string" && v !== "") ? v : "";
+    } catch (e) { return ""; }
+  }
+  function selectedEffortFor(modelId) {
+    var m = modelById(modelId);
+    var list = m ? modelEfforts(m) : [];
+    if (list.length === 0) return "";
+    var saved = storedEffortFor(modelId);
+    if (saved !== "" && list.indexOf(saved) >= 0) {
+      if (m && m.reasoningMandatory === true && saved === "none") return modelDefaultEffort(m);
+      return saved;
+    }
+    return modelDefaultEffort(m);
+  }
+  function setEffortFor(modelId, effort) {
+    var map = loadEfforts();
+    map[modelId] = effort;
+    saveEfforts(map);
+  }
+  function modelById(id) {
+    for (var k = 0; k < cachedModels.length; k++) {
+      if (cachedModels[k] && cachedModels[k].id === id) return cachedModels[k];
+    }
+    return null;
+  }
+  function selectedModelId() {
+    if (currentModelId !== "") return currentModelId;
+    try { return storeGet(MODEL_KEY) || ""; } catch (e) {}
+    return "";
+  }
+  function renderModelOptions(preferredId) {
+    if (!modelSel) return;
+    var balance = modelBalance();
+    var sorted = sortModelsCheapFirst(cachedModels);
+    var i, m, sel, opt;
+    var want = preferredId || "";
+    var wantOk = false;
+    var firstOk = "";
+    for (i = 0; i < sorted.length; i++) {
+      m = sorted[i];
+      if (!m || typeof m.id !== "string") continue;
+      sel = (balance == null || m.credits == null || m.credits <= balance);
+      if (sel && firstOk === "") firstOk = m.id;
+      if (m.id === want && sel) wantOk = true;
+    }
+    if (!wantOk) want = firstOk;
+    if (want !== "") { currentModelId = want; storeSet(MODEL_KEY, want); }
+    renderModelButton(want);
+    renderModelList(want);
+  }
+  function renderModelButton(want) {
+    if (!modelSel) return;
+    var m = modelById(want);
+    if (m) modelSel.textContent = modelLabel(m, true);
+    else modelSel.textContent = txNow().modelsLoading;
+    modelSel.disabled = (cachedModels.length === 0 || want === "");
+  }
+  function renderModelList(want) {
+    if (!modelList) return;
+    var balance = modelBalance();
+    var sorted = sortModelsCheapFirst(cachedModels);
+    while (modelList.firstChild) modelList.removeChild(modelList.firstChild);
+    for (var i = 0; i < sorted.length; i++) {
+      (function(m) {
+        if (!m || typeof m.id !== "string") return;
+        var sel = (balance == null || m.credits == null || m.credits <= balance);
+        var row = document.createElement("div");
+        row.className = "umeboshi-ask-model-row";
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "umeboshi-ask-model-pick";
+        b.setAttribute("role", "option");
+        b.setAttribute("data-model-id", m.id);
+        b.setAttribute("aria-checked", (m.id === want && sel) ? "true" : "false");
+        if (!sel) b.setAttribute("disabled", "disabled");
+        /* #198 4級に入るモデルはその級名、入らなければ Custom。級は選び中の
+           (modelId, effort) で決めるので、Effort を変えると行の級も追従する。 */
+        var tNow = txNow();
+        var rowTier = tierOfModel(m);
+        appendTierLabel(b, rowTier, modelShortName(m), tNow);
+        if (rowTier) b.setAttribute("data-tier", String(rowTier.tier));
+        var sc = modelScore(m);
+        if (sc !== "") {
+          var scEl = document.createElement("span");
+          scEl.className = "umeboshi-ask-model-score";
+          scEl.setAttribute("aria-label", txNow().smartScoreAria + sc);
+          scEl.textContent = "🧠";
+          var numEl = document.createElement("span");
+          numEl.className = "umeboshi-ask-model-score-num";
+          numEl.textContent = sc;
+          scEl.appendChild(numEl);
+          b.appendChild(scEl);
+        }
+        b.addEventListener("click", function() {
+          if (b.disabled) return;
+          currentModelId = m.id;
+          storeSet(MODEL_KEY, m.id);
+          renderModelButton(m.id);
+          renderModelList(m.id);
+          closeModelPopup();
+        });
+        row.appendChild(b);
+        var efforts = modelEfforts(m);
+        if (efforts.length > 0) {
+          var eb = document.createElement("button");
+          eb.type = "button";
+          eb.className = "umeboshi-ask-effort-btn";
+          eb.setAttribute("aria-haspopup", "dialog");
+          eb.setAttribute("aria-label", txNow().effortAria + ": " + effortDisplayName(selectedEffortFor(m.id)));
+          eb.textContent = effortDisplayName(selectedEffortFor(m.id)) + " ▸";
+          if (!sel) eb.disabled = true;
+          eb.addEventListener("click", function(ev) {
+            if (ev && ev.stopPropagation) ev.stopPropagation();
+            if (eb.disabled) return;
+            openEffortPopup(m.id);
+          });
+          row.appendChild(eb);
+        } else {
+          var slot = document.createElement("span");
+          slot.className = "umeboshi-ask-effort-slot-empty";
+          slot.setAttribute("aria-hidden", "true");
+          row.appendChild(slot);
+        }
+        modelList.appendChild(row);
+      })(sorted[i]);
+    }
+    if (sorted.length === 0) {
+      var tEmpty = txNow();
+      var empty = document.createElement("div");
+      empty.className = "umeboshi-ask-note";
+      empty.textContent = tEmpty.modelsFailOption;
+      modelList.appendChild(empty);
+    }
+  }
+  function openEffortPopup(modelId) {
+    if (!effortPopup || !effortList) return;
+    var m = modelById(modelId);
+    if (!m) return;
+    var list = modelEfforts(m);
+    if (list.length === 0) return;
+    if (m.reasoningMandatory === true) {
+      list = list.filter(function(v) { return v !== "none"; });
+    }
+    effortTargetId = modelId;
+    /* #82 B2: 一覧の renderModelList は modelShortName() で供給元の名前を落として
+       「GLM 5.3 Flash」にするのに、題名だけは m.name をそのまま使っていたため
+       「Z.ai: GLM 5.3 Flash — Effort」になっていた。題名も同じ関数を通す。 */
+    if (effortSheetTitle) effortSheetTitle.textContent = modelShortName(m) + " — " + txNow().effortLabel;
+    if (effortNote) effortNote.textContent = txNow().effortNote;
+    while (effortList.firstChild) effortList.removeChild(effortList.firstChild);
+    var current = selectedEffortFor(modelId);
+    for (var i = 0; i < list.length; i++) {
+      (function(v) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("role", "option");
+        b.setAttribute("data-effort", v);
+        b.setAttribute("aria-checked", v === current ? "true" : "false");
+        b.textContent = effortDisplayName(v) + (v === current ? " ✓" : "");
+        /* #198 Effort 別の強さを行の右に付ける。未計測は `—`。 */
+        appendScoreEl(b, effortScoreValue(m, v));
+        b.addEventListener("click", function() {
+          setEffortFor(modelId, v);
+          renderModelButton(selectedModelId() || storeGet(MODEL_KEY) || "");
+          renderModelList(selectedModelId() || storeGet(MODEL_KEY) || "");
+          closeEffortPopup(true);
+        });
+        effortList.appendChild(b);
+      })(list[i]);
+    }
+    effortPopup.hidden = false;
+    var closeBtn = byId("umeboshi-ask-effort-close");
+    if (closeBtn) closeBtn.setAttribute("aria-label", txNow().effortClose);
+    var sheet = byId("umeboshi-ask-effort-sheet");
+    if (sheet) sheet.setAttribute("aria-label", txNow().effortAria);
+  }
+  function closeEffortPopup(backToParent) {
+    if (!effortPopup || effortPopup.hidden) return;
+    effortPopup.hidden = true;
+    effortTargetId = "";
+    if (backToParent && modelPopup && modelPopup.hidden === false && modelSel) {
+      try { modelSel.focus(); } catch (e) {}
+    }
+  }
+  /* ---------- #198 4段階（ModelTier）選択 ----------
+     Worker の presets が正。各段は (modelId, effort) の1組で、押すと model＋effort の
+     2鍵を書く（段 index は保存しない。選んだ段は2鍵から逆算する）。
+     一覧に無い段は出さない。残量不足は押せず理由を1行出す（自動すり替えはしない）。 */
+  /* #198 級のアイコン（Material Symbols Outlined）。実体は inline SVG の path で、
+     外部フォントは読まない（カードはオフラインでも動く）。school/family_star/diamond/crown。 */
+  var TIER_ICON_PATHS = {
+    basic: "M480-120 200-272v-240L40-600l440-240 440 240v320h-80v-276l-80 44v240L480-120Zm0-332 274-148-274-148-274 148 274 148Zm0 241 200-108v-151L480-360 280-470v151l200 108Zm0-241Zm0 90Zm0 0Z",
+    middle: "M565.5-348.5Q603-377 620-422H340q17 45 54.5 73.5T480-320q48 0 85.5-28.5Zm-143-149Q440-515 440-540t-17.5-42.5Q405-600 380-600t-42.5 17.5Q320-565 320-540t17.5 42.5Q355-480 380-480t42.5-17.5Zm200 0Q640-515 640-540t-17.5-42.5Q605-600 580-600t-42.5 17.5Q520-565 520-540t17.5 42.5Q555-480 580-480t42.5-17.5ZM305-704l112-145q12-16 28.5-23.5T480-880q18 0 34.5 7.5T543-849l112 145 170 57q26 8 41 29.5t15 47.5q0 12-3.5 24T866-523L756-367l4 164q1 35-23 59t-56 24q-2 0-22-3l-179-50-179 50q-5 2-11 2.5t-11 .5q-32 0-56-24t-23-59l4-165L95-523q-8-11-11.5-23T80-570q0-25 14.5-46.5T135-647l170-57Zm49 69-194 64 124 179-4 191 200-55 200 56-4-192 124-177-194-66-126-165-126 165Zm126 135Z",
+    premium: "M480-120 80-600l120-240h560l120 240-400 480Zm-95-520h190l-60-120h-70l-60 120Zm55 347v-267H218l222 267Zm80 0 222-267H520v267Zm144-347h106l-60-120H604l60 120Zm-474 0h106l60-120H250l-60 120Z",
+    ultra: "M200-160v-80h560v80H200Zm0-140-51-321q-2 0-4.5.5t-4.5.5q-25 0-42.5-17.5T80-680q0-25 17.5-42.5T140-740q25 0 42.5 17.5T200-680q0 7-1.5 13t-3.5 11l125 56 125-171q-11-8-18-21t-7-28q0-25 17.5-42.5T480-880q25 0 42.5 17.5T540-820q0 15-7 28t-18 21l125 171 125-56q-2-5-3.5-11t-1.5-13q0-25 17.5-42.5T820-740q25 0 42.5 17.5T880-680q0 25-17.5 42.5T820-620q-2 0-4.5-.5t-4.5-.5l-51 321H200Zm68-80h424l26-167-105 46-133-183-133 183-105-46 26 167Zm212 0Z",
+    /* #198 4級のどれにも入らないモデル用（tune）。 */
+    custom: "M440-120v-240h80v80h320v80H520v80h-80Zm-320-80v-80h240v80H120Zm160-160v-80H120v-80h160v-80h80v240h-80Zm160-80v-80h400v80H440Zm160-160v-240h80v80h160v80H680v80h-80Zm-480-80v-80h400v80H120Z"
+  };
+  var TIER_LABEL_KEYS = { basic: "tierBasic", middle: "tierMiddle", premium: "tierPremium", ultra: "tierUltra" };
+  function tierLabelOf(p) {
+    var t = txNow();
+    var key = p && TIER_LABEL_KEYS[p.tier];
+    var s = key ? t[key] : "";
+    return (typeof s === "string" && s !== "") ? s : String(p && p.tier);
+  }
+  function presetEffortOf(p) {
+    return (p && typeof p.effort === "string" && p.effort !== "") ? p.effort : "";
+  }
+  /* #198 行のモデル側。「(Model: effort)」。選択なしモデルは effort を書かない。 */
+  function tierModelText(p, m) {
+    var s = "(" + modelShortName(m);
+    var eff = presetEffortOf(p);
+    if (eff !== "") s += ": " + eff;
+    return s + ")";
+  }
+  /* その段がいま選ばれているか。model が一致し、effort は選択中の値と比べる。 */
+  function presetIsCurrent(p) {
+    if (!p || typeof p.modelId !== "string" || p.modelId === "") return false;
+    var mid = selectedModelId();
+    if (mid === "" || mid !== p.modelId) return false;
+    var m = modelById(mid);
+    if (!m) return false;
+    return (modelEfforts(m).length > 0 ? selectedEffortFor(mid) : "") === presetEffortOf(p);
+  }
+  /* #198 モデル一覧の行に付ける級。(modelId, 選び中の effort) が presets の
+     どれかに一致すればその級、どれでもなければ Custom（tune アイコン）。
+     Opus は premium(high) と ultra(max) の2級に入るので、選び中の effort で決める。 */
+  function tierOfModel(m) {
+    if (!m) return null;
+    var eff = modelEfforts(m).length > 0 ? selectedEffortFor(m.id) : "";
+    for (var i = 0; i < cachedPresets.length; i++) {
+      var p = cachedPresets[i];
+      if (p && p.modelId === m.id && presetEffortOf(p) === eff) return p;
+    }
+    return null;
+  }
+  /* 級の見出し（アイコン＋級名）。Custom は tierCustom を出す。 */
+  function tierIconSvg(name) {
+    return '<svg class="umeboshi-ask-tier-icon-svg" viewBox="0 -960 960 960" aria-hidden="true" focusable="false"><path d="' + String(TIER_ICON_PATHS[name] || TIER_ICON_PATHS.custom) + '"/></svg>';
+  }
+  function appendTierLabel(btn, tier, modelText, t) {
+    var nm = document.createElement("span");
+    nm.className = "umeboshi-ask-model-tier";
+    nm.innerHTML = tierIconSvg(tier && tier.tier ? tier.tier : "custom");
+    var label = document.createElement("span");
+    label.className = "umeboshi-ask-model-tier-text";
+    label.textContent = tier ? tierLabelOf(tier) : t.tierCustom;
+    nm.appendChild(label);
+    btn.appendChild(nm);
+    var mn = document.createElement("span");
+    mn.className = "umeboshi-ask-model-name";
+    mn.textContent = "(" + modelText + ")";
+    btn.appendChild(mn);
+  }
+  function renderTierList() {
+    if (!tierList) return;
+    var t = txNow();
+    while (tierList.firstChild) tierList.removeChild(tierList.firstChild);
+    var balance = modelBalance();
+    var shown = 0;
+    for (var i = 0; i < cachedPresets.length; i++) {
+      (function(p) {
+        if (!p || typeof p.modelId !== "string" || p.modelId === "") return;
+        var m = modelById(p.modelId);
+        /* 一覧に無い段は出さない（モデル入れ替えで段が宙に浮くのを防ぐ）。 */
+        if (!m) return;
+        var sel = (balance == null || m.credits == null || m.credits <= balance);
+        var b = document.createElement("button");
+        b.type = "button";
+        b.setAttribute("role", "option");
+        b.setAttribute("data-tier", String(p.tier));
+        b.setAttribute("data-model-id", p.modelId);
+        b.setAttribute("aria-checked", presetIsCurrent(p) ? "true" : "false");
+        if (!sel) {
+          b.setAttribute("disabled", "disabled");
+          b.setAttribute("aria-label", tierLabelOf(p) + " " + tierModelText(p, m) + (t.tierNoBalance ? " " + t.tierNoBalance : ""));
+        }
+        /* #198 級名はアイコン＋太字、モデル側は (Model: effort) を小さく。 */
+        var nm = document.createElement("span");
+        nm.className = "umeboshi-ask-tier-name";
+        nm.innerHTML = tierIconSvg(p.tier);
+        var nmText = document.createElement("span");
+        nmText.className = "umeboshi-ask-tier-name-text";
+        nmText.textContent = tierLabelOf(p);
+        nm.appendChild(nmText);
+        b.appendChild(nm);
+        var mn = document.createElement("span");
+        mn.className = "umeboshi-ask-tier-model";
+        mn.textContent = tierModelText(p, m);
+        b.appendChild(mn);
+        /* #198 目安クレジットは出さない。強さだけ（human 決定）。
+           段の effort が有るならその強さ、選択なしモデルはモデル全体の強さ。 */
+        var rowScore = presetEffortOf(p) === "" ? modelScore(m) : effortScoreValue(m, presetEffortOf(p));
+        appendScoreEl(b, rowScore);
+        if (!sel) {
+          var nb = document.createElement("span");
+          nb.className = "umeboshi-ask-tier-no-balance";
+          nb.textContent = t.tierNoBalance || "";
+          b.appendChild(nb);
+        }
+        b.addEventListener("click", function() {
+          if (b.disabled) return;
+          currentModelId = p.modelId;
+          storeSet(MODEL_KEY, p.modelId);
+          var eff = presetEffortOf(p);
+          if (eff !== "") setEffortFor(p.modelId, eff);
+          renderModelButton(p.modelId);
+          renderModelList(p.modelId);
+          closeTierPopup();
+        });
+        tierList.appendChild(b);
+        shown++;
+      })(cachedPresets[i]);
+    }
+    if (shown === 0) {
+      var empty = document.createElement("div");
+      empty.className = "umeboshi-ask-note";
+      /* presets が無い Worker（デプロイ前）でも「モデルが取れなかった」とは言わない。
+         4段階が使えない状態であることを正確に伝える。 */
+      empty.textContent = cachedModels.length === 0 ? t.modelsFailOption : t.tierEmpty;
+      tierList.appendChild(empty);
+    }
+  }
+  function openTierPopup() {
+    if (!tierPopup) return;
+    renderTierList();
+    if (tierSheetTitle) tierSheetTitle.textContent = txNow().tierTitle;
+    if (modelSel) modelSel.setAttribute("aria-expanded", "true");
+    tierPopup.hidden = false;
+  }
+  function closeTierPopup() {
+    if (!tierPopup || tierPopup.hidden) return;
+    tierPopup.hidden = true;
+    if (modelSel) modelSel.setAttribute("aria-expanded", "false");
+  }
+  function openModelPopup() {
+    if (!modelPopup) return;
+    renderModelList(selectedModelId() || storeGet(MODEL_KEY) || "");
+    modelPopup.hidden = false;
+    if (modelSel) modelSel.setAttribute("aria-expanded", "true");
+  }
+  function closeModelPopup() {
+    if (!modelPopup || modelPopup.hidden) return;
+    closeEffortPopup(false);
+    modelPopup.hidden = true;
+    if (modelSel) modelSel.setAttribute("aria-expanded", "false");
+  }
+  function refreshModelSelectability() {
+    if (!modelSel || !cachedModels || cachedModels.length === 0) return;
+    renderModelOptions(selectedModelId() || storeGet(MODEL_KEY) || "");
+  }
+  function switchModelNotice(to) {
+    var t = txNow();
+    if (statusEl) statusEl.textContent = t.modelSwitched + (to ? ": " + to : "");
+  }
+  // 読取専用API疎通＋popup結線（失敗しても足場UIは壊さない。#47 native select不使用）
+  if (modelSel) {
+    modelSel.disabled = true;
+    modelSel.textContent = txNow().modelsLoading;
+    var savedModel = storeGet(MODEL_KEY) || "";
+    currentModelId = savedModel;
+    if (modelSel.addEventListener) {
+      modelSel.addEventListener("click", function() {
+        if (modelSel.disabled) return;
+        /* #198 モデルボタンは4段階を開く。従来の一覧は詳細モデル選択の奥。 */
+        if (tierPopup && !tierPopup.hidden) closeTierPopup();
+        else openTierPopup();
+      });
+    }
+    if (modelCloseBtn && modelCloseBtn.addEventListener) {
+      modelCloseBtn.addEventListener("click", function() { closeModelPopup(); });
+    }
+    if (modelBackBtn && modelBackBtn.addEventListener) {
+      /* #198 4段階を閉じてから開く（2枚同時に重ねない）。詳細の奥から1タップで戻れる。 */
+      modelBackBtn.addEventListener("click", function() {
+        closeModelPopup();
+        openTierPopup();
+      });
+    }
+    if (modelBackdrop && modelBackdrop.addEventListener) {
+      modelBackdrop.addEventListener("click", function() { closeModelPopup(); });
+    }
+    if (tierCloseBtn && tierCloseBtn.addEventListener) {
+      tierCloseBtn.addEventListener("click", function() { closeTierPopup(); });
+    }
+    if (tierBackdrop && tierBackdrop.addEventListener) {
+      tierBackdrop.addEventListener("click", function() { closeTierPopup(); });
+    }
+    if (tierDetailBtn && tierDetailBtn.addEventListener) {
+      tierDetailBtn.addEventListener("click", function() {
+        /* #198 4段階を閉じてから従来のモデル一覧を開く（2枚同時には重ねない）。 */
+        closeTierPopup();
+        openModelPopup();
+      });
+    }
+    if (effortCloseBtn && effortCloseBtn.addEventListener) {
+      /* #198 ✕ は「学習画面に戻る」＝ Effort とモデル一覧を両方閉じる。 */
+      effortCloseBtn.addEventListener("click", function() {
+        closeEffortPopup(false);
+        closeModelPopup();
+      });
+    }
+    if (effortBackBtn && effortBackBtn.addEventListener) {
+      /* #198 ← は1つ上（モデル一覧）に戻る。モデル一覧は開いたまま。 */
+      effortBackBtn.addEventListener("click", function() { closeEffortPopup(true); });
+    }
+    if (effortBackdrop && effortBackdrop.addEventListener) {
+      effortBackdrop.addEventListener("click", function() { closeEffortPopup(true); });
+    }
+    if (netFetch()) {
+      netFetch()(currentApiBase() + "/api/ask/models").then(function(res) {
+        if (!res.ok) throw new Error("bad status " + res.status);
+        return res.json();
+      }).then(function(body) {
+        var list = body && body.models ? body.models : [];
+        cachedModels = Object.prototype.toString.call(list) === "[object Array]" ? list : [];
+        /* #198 4段階の定義も同じ応答で受け取る。無い Worker は4段階を出さない。 */
+        var presets = body && body.presets ? body.presets : [];
+        cachedPresets = Object.prototype.toString.call(presets) === "[object Array]" ? presets : [];
+        renderModelOptions(savedModel);
+        renderTierList();
+        var tOk = txNow();
+        if (statusEl) statusEl.textContent = cachedModels.length + tOk.modelsAvailable;
+      }).catch(function() {
+        var tFail = txNow();
+        if (statusEl) statusEl.textContent = tFail.modelsFail;
+        if (modelSel) { modelSel.textContent = tFail.modelsFailOption; modelSel.disabled = true; }
+        cachedModels = [];
+        cachedPresets = [];
+        renderModelList("");
+        renderTierList();
+      });
+    } else if (statusEl) {
+      statusEl.textContent = txNow().modelsFailFetch;
+    }
+  } else if (netFetch() && statusEl) {
+    netFetch()(currentApiBase() + "/api/ask/models").then(function(res) {
+      if (!res.ok) throw new Error("bad status " + res.status);
+      return res.json();
+    }).then(function(body) {
+      var n = body && body.models ? body.models.length : 0;
+      statusEl.textContent = n + txNow().modelsAvailable;
+    }).catch(function() {
+      statusEl.textContent = txNow().modelsFail;
+    });
+  }
+})();
+</script>

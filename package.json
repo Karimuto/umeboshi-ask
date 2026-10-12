@@ -1,0 +1,36 @@
+{
+  "name": "@umeboshi/ask",
+  "version": "1.5.3",
+  "description": "Self-hosted study helper for Anki (Worker core, panel source, add-on)",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "LICENSE",
+    "README.md",
+    "AGENTS.md",
+    "build",
+    "addon/",
+    "claudeflare/src/",
+    "claudeflare/test/core/",
+    "claudeflare/wrangler.core.toml",
+    "claudeflare/package.json",
+    "claudeflare/tsconfig.json",
+    "src/components/",
+    "test/"
+  ],
+  "exports": {
+    "./core": "./claudeflare/src/core.ts",
+    "./panel": "./src/components/askScaffold.ejs",
+    "./addon": "./addon/inject.py",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "node addon/inject-build.mjs",
+    "build:addon": "node addon/pack.mjs",
+    "test": "node --test \"test/*.test.mjs\" \"test/lib/*.test.mjs\"",
+    "test:core": "npm --prefix claudeflare run test:core"
+  },
+  "dependencies": {
+    "ejs": "^3.1.6"
+  }
+}
