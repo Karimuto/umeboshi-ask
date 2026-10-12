@@ -268,6 +268,12 @@ describe("#266 OS6b OSS tree に課金語が無い", () => {
       "claudeflare/src/models.ts",
       "test/panel-module.test.mjs",
       "oss/assemble.mjs",
+      "oss/CONTRIBUTING.md",
+      "oss/CODEOWNERS",
+      "oss/SECURITY.md",
+      "oss/ISSUE_TEMPLATE/bug_report.md",
+      "oss/ISSUE_TEMPLATE/feature_request.md",
+      "oss/ISSUE_TEMPLATE/selfhost_help.md",
     ]) {
       assert.equal(inScope(t), true, `${t} が scope から外れた`);
     }

@@ -74,3 +74,28 @@ this tree. Do not bring billing words here (billing, Stripe, checkout,
 credits as a balance, subscription, topup, promo, and their Japanese forms).
 The per-model price field the Worker sends (`m.credits`) is received, not
 introduced, and stays out of the scan as a property access.
+
+## Troubleshooting
+
+- 401: check the access token
+  in the panel settings.
+  It must match `ASK_TOKEN`.
+- Save fails: without `[[kv_namespaces]]`,
+  threads and settings cannot persist.
+  The panel falls back to local settings.
+- Chat returns 503:
+  `OPENROUTER_API_KEY` is not set.
+- Browser blocks the call: check CORS.
+  The core answers known origins only
+  (Anki Desktop, AnkiWeb, loopback
+  for AnkiDroid, and same origin).
+
+## Hosted version
+
+A hosted version exists
+for those who do not want to self-host.
+The only differences are login,
+payment, and sync.
+This repo has none of those.
+See https://umeboshi-ask.pages.dev/
+for the hosted version.

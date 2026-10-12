@@ -148,6 +148,10 @@ export function inScope(path) {
   if (path === "test/oss-boundary.test.mjs") return true;
   if (path === "test/lib/oss-scope.mjs") return true;
   if (path === "oss/assemble.mjs") return true;
+  if (path === "oss/CONTRIBUTING.md") return true;
+  if (path === "oss/CODEOWNERS") return true;
+  if (path === "oss/SECURITY.md") return true;
+  if (/^oss\/ISSUE_TEMPLATE\/[^/]+\.md$/.test(path)) return true;
   if (path === "claudeflare/package.json") return true;
   if (path === "claudeflare/tsconfig.json") return true;
   return false;
