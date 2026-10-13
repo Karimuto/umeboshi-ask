@@ -1,46 +1,46 @@
-// #259 OS3a: 課金のない Worker コア入口。完全版 (src/index.ts) の横に立つ
-// 2本目の Worker エントリで、OSS として配る Worker 部分の元になる。
+// #259 OS3a: billing-free Worker core entry. Second Worker entry beside the
+// full build (src/index.ts); source of the Worker part shipped as OSS.
 //
-// 持つ route:
-//   POST /api/ask/chat                       質問の中継（予約・精算・予算ガードなし）
-//   GET  /api/ask/models                     モデル一覧（bundle 固定のみ）
-//   GET  /api/ask/panel                      面板の版と停止旗の照会
-//   GET  /api/ask/threads[...]               質問と解答の保存（Bearer必須）
-//   GET|POST /api/settings                   設定の保存（Bearer必須）
+// Routes it owns:
+//   POST /api/ask/chat                       relay questions (no reserve/settle/budget guard)
+//   GET  /api/ask/models                     model list (fixed bundle only)
+//   GET  /api/ask/panel                      panel version and stop-flag lookup
+//   GET  /api/ask/threads[...]               question/answer storage (Bearer required)
+//   GET|POST /api/settings                   settings storage (Bearer required)
 //
-// 持たないもの（問わないで404）:
-//   課金 route（/api/billing/*・/billing・/api/usage）
-//   ログイン認証 route（/api/auth/*・完全版 src/index.ts 専用）
-//   モデル在庫の cron・allowlist・purge・匿名予算
+// Not owned (404 without asking):
+//   billing routes (/api/billing/*, /billing, /api/usage)
+//   login-auth routes (/api/auth/*, full src/index.ts only)
+//   model-inventory cron, allowlist, purge, anon budget
 //
-// 認証は #255 OS2a のアクセストークン（env ASK_TOKEN）だけ。ログイン認証の
-// 鍵は持たないので、Bearer が ASK_TOKEN と一致した request だけ threads・
-// settings を保存できる（userId はトークンの SHA-256 ハッシュ）。不一致の
-// Bearer は匿名に落とさず 401。Bearer が無い chat・models は匿名のまま通す。
+// Auth is only the #255 OS2a access token (env ASK_TOKEN). It holds no login
+// keys, so only requests whose Bearer matches ASK_TOKEN can save threads and
+// settings (userId is the token SHA-256 hash). A non-matching Bearer is 401,
+// never anon. Bearer-less chat/models pass through as anon.
 //
-// #262 OS4a: ログイン認証（外部IdP・署名付きトークン・20文字コード）は
-// 完全版だけの実装 (src/auth.ts) に閉じ、この入口から import 到達できない。
-// 認証の契約は共有の src/identity.ts が持ち、トークン検証器だけを完全版が
-// 注入する（コアは渡さないので検証の経路自体が無い）。
+// #262 OS4a: login auth (external IdP, signed tokens, 20-char codes) stays
+// inside the full-only implementation (src/auth.ts), unreachable by import
+// from this entry. The contract lives in shared src/identity.ts; only the full
+// build injects a token verifier (core passes none, so the path never exists).
 //
-// KV なしでの劣化契約（OS3a で定義。解答は src/stores.ts の1箇所）:
-//   KV を束縛しない自己ホストでは chat・models は動く。settings は今日どおり
-//   失敗扱い（面板はローカル設定にフォールバック）、threads の保存も失敗して
-//   面板はローカルの写しのまま動く。匿名予算も無いので課金の話は出ない
-//   （chat の done に charged を載せない）。
+// Degraded-without-KV contract (defined in OS3a. Answered in src/stores.ts alone):
+//   self-host without KV still runs chat/models. Settings fail as before
+//   (panel falls back to local settings), thread saves fail and the panel
+//   keeps running on its local copy. No anon budget, so no billing story
+//   (no charged on chat done).
 //
-// #264 OS4b: hosted 運用の機構をコアから外す（完全版 src/index.ts は不変）。
-//   - cors の許可ヘッダーは ALLOW_HEADERS_CORE。課金 webhook の署名ヘッダー
-//     (Stripe-Signature) はコアに route が無いので載せない
-//   - rate limit は掛けない（個人利用の最小構成。Cloudflare 側の制限に委ねる）。
-//     ratelimit・IP ハッシュは export として残し、完全版の auth スコープが使う
-//   - モデル一覧は bundle 固定のみ。allowlist・在庫キャッシュ・cron・purge は
-//     完全版側。応答から credits（予約額）字段も落とす
-//   - 匿名予算（二重鍵・JST バケット・クレジット換算）は完全版側。IP+UA ハッシュの
-//     salt は ANON_SALT のみ（ログイン認証の鍵へのフォールバックは、コアに署名検証が
-//     居なくなったので廃止）
-//   - chat route は予約・精算・予算ガードを呼ばない（完全版は精算経路を自分の
-//     entry が持つ）
+// #264 OS4b: hosted machinery stays out of core (full src/index.ts unchanged).
+//   - CORS allow headers are ALLOW_HEADERS_CORE. No billing-webhook signature
+//     header (Stripe-Signature): core has no such route
+//   - no rate limit (minimal self-use setup. Defers to Cloudflare-side limits).
+//     ratelimit/IP hash stay as exports for the full auth scope
+//   - model list is the fixed bundle only. allowlist, inventory cache, cron,
+//     purge are hosted-side. Drop credits (reserved amount) from responses too
+//   - anon budget (double key, JST bucket, credit conversion) is hosted-side.
+//     Salt is ANON_SALT only (fallback to the login key is gone: core has no
+//     signature check left)
+//   - chat route calls no reserve/settle/budget guard (hosted keeps its settle
+//     path on its own entry)
 import { handleChat } from "./chat";
 import { MODEL_PRESETS, resolveModels } from "./models";
 import { readPanelRelease } from "./panel";
@@ -60,44 +60,44 @@ import {
 } from "./threads";
 
 /**
- * コアの CORS 応答。許可ヘッダーは ALLOW_HEADERS_CORE（課金 webhook の署名
- * ヘッダー Stripe-Signature を載せない・#264 OS4b）。完全版は cors.ts の既定
- * (ALLOW_HEADERS) をそのまま使うので、hosted の挙動は変わらない。
+ * Core CORS reply. Allow headers are ALLOW_HEADERS_CORE (no billing-webhook
+ * signature header Stripe-Signature, #264 OS4b). Hosted keeps using the cors.ts
+ * default (ALLOW_HEADERS), so hosted behavior never changes.
  *
- * 入口の全 route がこの1枚を通す（20 以上の呼び口が lockstep で要るので
- * 関数に束ねる。1箇所でも withCors を直に呼ぶと署名ヘッダーが復る）。
+ * Every entry route passes this one sheet (20+ call sites need lockstep, so
+ * bundle them in a function. One direct withCors call restores the header).
  */
 function coreCors(request: Request, response: Response): Response {
   return withCors(request, response, ALLOW_HEADERS_CORE);
 }
 
-/** コア入口の env。課金・ログイン認証に要る鍵は持たない。 */
+/** Core entry env. Holds no billing/login-auth keys. */
 export interface CoreEnv {
-  // OpenRouterキー。未設定のchatは503で明示する。
+  // OpenRouter key. Chat without it answers 503 explicitly.
   OPENROUTER_API_KEY?: string;
-  // #255 OS2a: 自己ホスト Worker のアクセストークン（任意・1本）。
-  // 設定すると Bearer がこれと一致したリクエストだけ threads・settings を
-  // 保存できる（userId はトークンの SHA-256 ハッシュ。生値は保存しない）。
-  // 未設定なら Bearer は匿名として扱い、chat・models は従来どおり動く。
+  // #255 OS2a: self-host Worker access token (optional, single).
+  // Only requests whose Bearer matches it can save threads/settings
+  // (userId is the token SHA-256 hash. Raw value never stored).
+  // Without it, Bearers are anon and chat/models run as before.
   ASK_TOKEN?: string;
-  // 保存用KV（任意）。束縛しなければ threads・settings・面板照会は失敗扱い。
+  // Storage KV (optional). Without a binding, threads/settings/panel lookup fail.
   UMEBOSHI_KV?: KVNamespace;
 }
 
-/** コア入口の deps（テスト注入用）。完全版の Deps の保存・chat 関連だけ。 */
+/** Core entry deps (test injection). Storage/chat subset of the full Deps. */
 export interface CoreDeps {
   store?: AuthStore;
   fetchFn?: typeof fetch;
-  /** テスト注入用 (S9無音切替のdeadline上書きms)。未指定時はSILENCE_TIMEOUT_MS。 */
+  /** Test injection (S9 silence-switch deadline override ms). Defaults to SILENCE_TIMEOUT_MS. */
   chatTimeoutMs?: number;
 }
 
 /**
- * コア入口の HTTP 処理。持つ route だけが応答し、他は 404。
+ * Core entry HTTP handler. Only owned routes answer; the rest 404.
  *
- * chat は完全版のように予約・精算・予算ガードを刺さない。credits の概念を
- * まるごと持たないので、onSettled・chargedFor は渡さず、done に charged を
- * 載せない（面板は charged が無ければ消費表示を出さない）。
+ * Chat plants no reserve/settle/budget guard as the full build does. It owns
+ * no credits concept at all, so pass no onSettled/chargedFor and put no
+ * charged on done (panel hides usage display without charged).
  */
 export async function handleCoreRequest(
   request: Request,
@@ -109,15 +109,15 @@ export async function handleCoreRequest(
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeadersFor(request, ALLOW_HEADERS_CORE) });
   }
-  // モデル一覧は bundle 固定のみ。allowlist・在庫キャッシュを持たないので
-  // store は渡さない（KV を束縛しても一覧は bundle のまま）。
+  // Model list is the fixed bundle only. No allowlist/inventory cache, so pass
+  // no store (list stays bundle even with KV bound).
   if (request.method === "GET" && url.pathname === "/api/ask/models") {
     const resolved = await resolveModels(undefined);
     return coreCors(
       request,
       Response.json({
-        // #264 OS4b: credits（予約額）は課金の額面。コアは credits の概念を
-        // 持たないので一覧から落とす（OS6b の境界ガードの前提）。
+        // #264 OS4b: credits (reserved amount) is billing face value. Core owns
+        // no credits concept, so drop it from the list (OS6b boundary-guard premise).
         models: resolved.models.map((m) => {
           const bare = { ...m };
           delete bare.credits;
@@ -129,8 +129,8 @@ export async function handleCoreRequest(
       }),
     );
   }
-  // UM1 (#183/spec #188): panel の版と停止旗の照会口。認証なし・本文なし。
-  // KV を束縛しない自己ホストは版も旗も持たないので unavailable を返す。
+  // UM1 (#183/spec #188): panel version/stop-flag lookup. No auth, no body.
+  // Self-host without KV has neither, so answer unavailable.
   if (request.method === "GET" && url.pathname === "/api/ask/panel") {
     const release = await readPanelRelease(authStoreFor(deps, env));
     if (!release) {
@@ -145,8 +145,8 @@ export async function handleCoreRequest(
       }),
     );
   }
-  // #259 OS3a: 課金の話をしない chat。identity は誤 token のときだけ 401 に使い、
-  // 匿名予算・ユーザー予算・精算は呼ばない。
+  // #259 OS3a: chat with no billing story. Identity only 401s on a wrong token;
+  // never calls anon/user budget or settle.
   if (request.method === "POST" && url.pathname === "/api/ask/chat") {
     const identity = await resolveIdentity(request, env);
     if (identity.kind === "unauthorized") {
@@ -159,9 +159,9 @@ export async function handleCoreRequest(
     });
     return coreCors(request, chatRes);
   }
-  // S6: Thread保存 (Message単位・titleなし・thinkingなし)。認証はアクセス
-  // トークンのみ。匿名・誤 token は401＋needLogin、KV 未束縛は500。
-  // 照合: x-card-idヘッダ不一致400・所有者不一致403 (threads.ts側)。
+  // S6: Thread storage (per-Message, no title, no thinking). Access token only.
+  // Anon/wrong token is 401+needLogin, unbound KV is 500.
+  // Match: x-card-id header mismatch 400, owner mismatch 403 (threads.ts side).
   if (url.pathname === "/api/ask/threads" && request.method === "GET") {
     const userId = await storageUserId(request, env);
     if (!userId) return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);
@@ -252,9 +252,9 @@ export async function handleCoreRequest(
       return coreCors(request, Response.json(r.body, { status: r.status }));
     }
   }
-  // S12: 設定export/import。（フロントは匿名にボタンを出さずログイン誘導）。
-  // コアはログイン認証を持たないので、アクセストークン一致の Bearer だけが
-  // 保存できる。KV 未束縛は 500（面板はローカル設定にフォールバックする）。
+  // S12: settings export/import. (Front hides the button from anon with a login prompt.)
+  // Core has no login auth, so only a Bearer matching the access token can save.
+  // Unbound KV is 500 (panel falls back to local settings).
   if (request.method === "GET" && url.pathname === "/api/settings") {
     const userId = await storageUserId(request, env);
     if (!userId) return needLoginJson(request, 401, "unauthorized", ALLOW_HEADERS_CORE);

@@ -1,6 +1,6 @@
-// #260 OS3b: コア入口 (src/core.ts) を向ける chat テスト。課金・精算に纏わる
-// 終端（done/error の charged・cost の確定）は完全版だけの契約なので
-// test/full/chat-settle.test.ts が完全版入口 (src/index.ts) を向いて検証する。
+// #260 OS3b: chat tests target the core entry (src/core.ts). Billing/settle
+// terminators (charged/cost finalization on done/error) are full-build-only,
+// so test/full/chat-settle.test.ts covers them via the full entry (src/index.ts).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleCoreRequest } from "../../src/core";
 import { CHAT_SYSTEM_PROMPT, handleChat } from "../../src/chat";
@@ -75,7 +75,7 @@ describe("POST /api/ask/chat (S2最小ループ)", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    // S8契約: Allowlist外は404＋fallback id（フロントが自動切替＋トーストする）
+    // S8 contract: off-allowlist returns 404 + fallback id (frontend auto-switches with a toast).
     const bad = await handleCoreRequest(postChat({ model: "nope/unknown", question: "Q" }), env);
     expect(bad.status).toBe(404);
     const badBody = (await bad.json()) as { fallback?: unknown };
@@ -202,8 +202,8 @@ describe("POST /api/ask/chat (S2最小ループ)", () => {
     expect(events[1]?.["delta"]).toBe("r2");
   });
 
-  // #94: 考え中で max_tokens を使い切ると finish_reason=length で本文0文字のまま終わる。
-  // done は「正常終了」の意味なので、切り詰めは error として見せる。
+  // #94: running out of max_tokens mid-reasoning ends with finish_reason=length and zero body text.
+  // done means "clean finish", so truncation surfaces as error.
   it("#94: finish_reason=lengthはdoneを返さずerror(truncated)を流す", async () => {
     vi.stubGlobal(
       "fetch",
@@ -257,10 +257,10 @@ describe("POST /api/ask/chat (S2最小ループ)", () => {
     expect(events.map((e) => e.type)).toEqual(["content", "done"]);
   });
 
-  // #94 「lowでも空枠が出る」の実測根拠（claudeflare/CHAT_MAX_TOKENS=8192）：
-  // effort=low でも reasoning は 178〜696 token でしか無く finish=stop・本文あり（15/15）。
-  // つまり length 経由の切り詰めではない。length 以外で本文0文字は「空で正常終了」であり、
-  // カード側は空枠だけが残ってどこも異常表示が出ない。だから error として見せる。
+  // #94 measured basis for "empty cards on low" (claudeflare/CHAT_MAX_TOKENS=8192):
+  // even at effort=low, reasoning is only 178-696 tokens with finish=stop and body text (15/15).
+  // So this is not length truncation. Zero body with non-length reason is an "empty clean finish",
+  // and the card leaves only an empty frame with no error shown. Hence surface it as error.
   it("#94: length以外で本文0文字ならdoneでなくerror(empty_answer)を流す", async () => {
     vi.stubGlobal(
       "fetch",
@@ -298,8 +298,8 @@ describe("POST /api/ask/chat (S2最小ループ)", () => {
     }
   });
 
-  // #94: 上流が choices なしの error フレームを流す場合（HTTP200 + 本文0文字）。
-  // 解析器は choices を見ずに捨てるため「空で正常終了」になる。カードも何も出さない。
+  // #94: upstream streams an error frame without choices (HTTP 200 + zero body text).
+  // The parser drops it without looking at choices, yielding an "empty clean finish" with no card output.
   it("#94: choices無しのerrorフレームも本文0文字ならempty_answerになる", async () => {
     vi.stubGlobal(
       "fetch",
@@ -328,7 +328,7 @@ describe("POST /api/ask/chat (S2最小ループ)", () => {
     expect(events.map((e) => e.type)).toEqual(["content", "done"]);
   });
 
-  // #94: 切替（404/S9）先のストリームも本文0文字なら空回答。切替成功でも空は空。
+  // #94: a switched-to (404/S9) stream with zero body is still an empty answer. Switched-but-empty is empty.
   it("#94: 404で切替した先が本文0文字でもempty_answer（doneにしない）", async () => {
     vi.stubGlobal(
       "fetch",
@@ -467,8 +467,8 @@ describe("POST /api/ask/chat (S2最小ループ)", () => {
     expect(events[0]).toMatchObject({ type: "switched", to: BUNDLE_MODELS[0]!.id });
     expect(events[0]).not.toHaveProperty("effort");
   });
-  // 例外 (ts-no-test-timers): 沈黙時間と上流到着のwall-clockレース自体が検証対象のため実時間で待つ。
-  // fake clockではdeadlineと到着が同じ仮想時計で進みレースを観測できない。
+  // Exception (ts-no-test-timers): the wall-clock race of silence vs upstream arrival is itself under test,
+  // so wait in real time. A fake clock drives deadline and arrival on the same virtual clock, hiding the race.
   it("S9: 完全無音が続けば別モデルへ切替しswitched(reason timeout, charged:true)を1回だけ流す", async () => {
     const calls: string[] = [];
     vi.stubGlobal(
@@ -501,7 +501,7 @@ describe("POST /api/ask/chat (S2最小ループ)", () => {
     expect(events.map((e) => e.type)).toEqual(["switched", "content", "done"]);
   });
 
-  // 実時間の60ms遅延チャンクで「thinking到達後にdeadline超過」を再現 (上記例外と同じ理由)。
+  // 60ms-delayed real-time chunk reproduces "deadline passes after thinking arrived" (same exception as above).
   it("S9: thinking到達後は15秒超でも待つ（切替なし）", async () => {
     vi.stubGlobal(
       "fetch",

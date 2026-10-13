@@ -1,12 +1,12 @@
-// #266 OS6b: OSS tree の境界定義。ガード (test/oss-boundary.test.mjs) と
-// 組み立て (OS6c) が同じ定義を読むための置き場。
+// #266 OS6b: OSS-tree boundary definition. Shared home for the guard
+// (test/oss-boundary.test.mjs) and the assembly (OS6c) to read one definition.
 //
-// OS6c は OSS tree を組み立てるとき、この IN_SCOPE / OUT_OF_SCOPE の二分を
-// そのまま使うこと。keyword を足すときは KEYWORDS を直し、日常語の pin は
-// ガード側 (ALLOWED_EVERYDAY_WORDS) と同時に直す。片方だけ直すと赤になる。
+// OS6c must reuse this inScope/outReason split when assembling the OSS tree.
+// When adding a keyword, edit KEYWORDS and the guard-side everyday-word pin
+// together. Editing only one side fails.
 
-// 課金語。実装語だけを載せる。日常語 (plan・usage・model 等) は載せない。
-// size は小文字で探す (Stripe は Stripe-Signature 等の固有名も拾うため)。
+// Billing terms. Implementation words only; no everyday words (plan, usage, model, ...).
+// Match case-insensitively (Stripe also catches Stripe-Signature proper nouns).
 export const KEYWORDS = Object.freeze([
   { word: "billing", pattern: /\bbilling\b/gi, why: "code" },
   { word: "Stripe", pattern: /\bstripe\b/gi, why: "code" },
@@ -22,12 +22,12 @@ export const KEYWORDS = Object.freeze([
   { word: "残高", pattern: /残高/g, why: "code" },
 ]);
 
-// 語ごとの選定理由。keyword を足す・削るときはここも直す。
-// billing・Stripe・checkout・subscription・topup・promo: 課金の機構語。
-// どれも日常の面板・Worker の語彙には現れない (日常語は別 pin で固定)。
-// credits: モデル価格の受取 (`m.credits` の読取) は許す。property access を
-// 走査から外すので、残る `credits` は課金の額面だけになる (詳細は下の注)。
-// クレジット・価格・料金・請求・残高: 課金の和文語。base の和文に現れない。
+// Per-term selection reasons. Update here when adding/removing keywords.
+// billing, Stripe, checkout, subscription, topup, promo: billing machinery terms.
+// None appear in everyday panel/Worker vocabulary (everyday words pinned separately).
+// credits: receiving the model price (`m.credits` read) is allowed. Property
+// access is stripped from the scan, so remaining `credits` is only billed amounts (note below).
+// The Japanese billing terms (see KEYWORDS). Never appear in base Japanese copy.
 export const KEYWORD_NOTES = Object.freeze({
   billing: "billing route・billing module の機構語",
   Stripe: "Stripe SDK・webhook の機構語",
@@ -43,21 +43,22 @@ export const KEYWORD_NOTES = Object.freeze({
   残高: "課金の和文語",
 });
 
-// 除外理由つき許容。ガードが走査の前に外すもの。
-// 1. `.credits` の property access (`m.credits` 等): Worker が送る価格字段の
-// 受取であり、課金概念の導入ではない。base は `m.credits == null` を選択可
-// として扱う (OS4b の前提)。コード層から `\.[A-Za-z_$][\w$]*` を外す。
-// 実装は property 名ごとではなく access 丸ごとに外す。`m.credits` の `m`
-// が残っても日常語なので誤爆しないし、`.` の後ろを残すより穴が小さい。
-// 2. `kind === "billing"` の kind 文字列: popup 文面の種別子であり、base に
-// billing 文面が無いことは別 pin (base に課金トークンが無いこと) で見る。
-// 文字列の中身は走査しないので、ここでは外す理由を書くだけ。
-// 3. OSS 側 root テストと test/lib の語彙: host との差分を述べる言及であり、
-// 実装の導入ではない。走査対象外とし、テスト自体の導入は keyword snapshot で pin。
-// 4. models.ts の `credits` 定義: bundle の予約額の正であり、コア応答には
-// 載せない ((b) の `delete bare.credits` が pin)。OSS tree に置く公開単価の
-// 目安であり、課金機構の導入ではない。keyword 走査では `credits` の語だけ
-// models.ts から外し、他の課金語が混ざったら赤になる形にする。
+// Allowed with documented reasons. Stripped before the guard scans.
+// 1. `.credits` property access (`m.credits` etc.): receives the price field
+// sent by the Worker, not a billing-concept introduction. Base treats
+// `m.credits == null` as selectable (OS4b premise). Strip `\.[A-Za-z_$][\w$]*`
+// from the code layer. Strip the whole access, not per property name: a
+// leftover `m` from `m.credits` is an everyday word and cannot misfire,
+// and it leaves a smaller hole than keeping the name after `.`.
+// 2. `kind === "billing"` kind strings: popup-copy kind labels, and the
+// absence of billing copy in base is pinned separately (no billing tokens in base).
+// String contents are never scanned; the reason is only recorded here.
+// 3. OSS-side root tests and test/lib vocabulary: mentions describing the
+// host diff, not implementation. Unscanned; their own terms are pinned by keyword snapshot.
+// 4. models.ts `credits` definition: the legit bundle reservation, never in
+// the core response (pinned by (b) `delete bare.credits`). A public unit-price
+// guide for the OSS tree, not billing machinery. The keyword scan excludes
+// only `credits` from models.ts so any other billing term still fails.
 export const ALLOW_NOTES = Object.freeze([
   "`.credits` の property access は Worker の価格字段の受取なので外す",
   "`kind === \"billing\"` の kind 文字列は文面の種別子。文字列の中身は走査しない",
@@ -65,8 +66,8 @@ export const ALLOW_NOTES = Object.freeze([
   "models.ts の `credits` 定義は bundle の予約額の正。(b) の落としと組で pin し、他の課金語は走査する",
 ]);
 
-// worker のコア到達集合。core.ts の静的 import の推移閉包。
-// ratelimit・anon を core.ts が import しないことが OS4b の前提。
+// Worker core reachability set. Transitive closure of core.ts static imports.
+// OS4b premise: core.ts must not import ratelimit or anon.
 export const CORE_REACHABLE = Object.freeze([
   "chat.ts",
   "core.ts",
@@ -80,10 +81,10 @@ export const CORE_REACHABLE = Object.freeze([
   "threads.ts",
 ]);
 
-// 評価する OSS 側 root テスト。OSS tree 内でも緑になるものだけ。
-// addon-package・anki-note-types・archive-shadowing・note-types-freshness・
-// ja-en-parity・setup-min は host 専用物（PUBLISH/CHECKLIST・fixture・git 履歴・
-// site）を参照するので host 側へ移した（OS6c の実測）。
+// OSS-side root tests under evaluation. Only ones green inside the OSS tree.
+// addon-package, anki-note-types, archive-shadowing, note-types-freshness,
+// ja-en-parity, setup-min are host-only (they touch PUBLISH/CHECKLIST,
+// fixtures, git history, site), so they moved host-side (measured in OS6c).
 export const OSS_ROOT_TESTS = Object.freeze([
   "test/s13-dod.test.mjs",
   "test/os2c-selfhost.test.mjs",
@@ -92,7 +93,7 @@ export const OSS_ROOT_TESTS = Object.freeze([
   "test/thread-head-typography.test.mjs",
 ]);
 
-// host 側 root テスト。評価しない。
+// Host-side root tests. Not evaluated.
 export const HOST_ROOT_TESTS = Object.freeze([
   "test/um4-compat.test.mjs",
   "test/panel-login-dod.test.mjs",
@@ -125,8 +126,8 @@ export const HOST_ROOT_TESTS = Object.freeze([
   "test/setup-min.test.mjs",
 ]);
 
-// 含める: 追跡ファイルだけを評価する (`git ls-files`)。
-// worker は CORE_REACHABLE の推移閉包、test は OSS_ROOT_TESTS だけ。
+// Inclusions: evaluate tracked files only (`git ls-files`).
+// Worker files are the CORE_REACHABLE closure; tests only OSS_ROOT_TESTS.
 export function inScope(path) {
   if (path === "package.json") return true;
   if (path === "build") return true;
@@ -157,7 +158,7 @@ export function inScope(path) {
   return false;
 }
 
-// 除く理由。ガードが対象外を数えるときの説明用。
+// Exclusion reasons. Labels for the guard's out-of-scope counts.
 export function outReason(path) {
   if (path === "src/commercial/panel-module.js") return "commercial";
   if (path.startsWith("src/commercial/")) return "commercial";

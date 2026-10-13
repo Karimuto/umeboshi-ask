@@ -6,35 +6,35 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { panelScript } from "./lib/panel-script.mjs";
 
-// OS2c (#258): URL/token を貼るだけで自分の Worker に繋がる end-to-end の vm ゲート。
-// s13-dod は他チケットが編集中なので衝突を避け、このファイルに OS2c の契約を
-// 独立に固定する。vm ハーネスは s13-dod の drive() から最小限を写したもの。
+// OS2c (#258): paste a URL/token to connect your own Worker; end-to-end vm gate.
+// s13-dod is being edited under another ticket, so to avoid collision this file
+// pins the OS2c contract independently. The vm harness is a minimal copy of s13-dod's drive().
 //
-// 契約（#258 で定義）:
-//   接続先 = 設定の Worker URL > root.UMEBOSHI_ASK_API_BASE（外部フック）> 既定の公式 URL
-//   Authorization = 設定のアクセストークン > ログインのアクセストークン
-//   誤 token の 401 は面板のエラー領域へ workerTokenInvalid の案内を出す
+// Contract (defined in #258):
+//   Target = settings Worker URL > root.UMEBOSHI_ASK_API_BASE (external hook) > default official URL
+//   Authorization = settings access token > login access token
+//   A 401 from a wrong token shows the workerTokenInvalid guidance in the panel error area.
 //
-// 実 Worker（wrangler dev・ローカル KV）との round-trip は
-// docs/runbook-os2c-selfhost.md の手順で別途確認する（ここでは vm で固定）。
+// Round-trip against a real Worker (wrangler dev + local KV) is verified separately
+// via docs/runbook-os2c-selfhost.md (here it is pinned with vm).
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, "..");
 const BUILT = path.join(REPO, "addon/templates/inject.html");
 const SRC = (p) => fs.readFileSync(path.join(REPO, p), "utf8");
-// コメントを外した本文。「コードに現れない」を数えるときはこちらを読む。
+// Body with comments stripped. Read this when counting "absent from the code".
 const SRC_CODE = (p) =>
   SRC(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 
-// 面板の3コピー。雛形（scaffold＋partial）・base ビルド出力（AnkiWeb add-on が
-// 積む inject.html）・注入版（host build＝base＋billing module）。AC の
-// 「各コピーで一致した動き」を这うので3本とも vm に流せる形で持つ。
-// OS5c (#265): ログイン UI は module 側へ移った。既定の drive は注入版を読む。
-// assert は 1 つも変えない。
+// The three panel copies. Scaffold (scaffold+partial), base build output
+// (inject.html shipped by the AnkiWeb add-on), injected build (host build = base+billing module). The AC
+// "same behavior in each copy" needs all three drivable through vm.
+// OS5c (#265): the login UI moved to the module side. The default drive reads the injected build.
+// Do not change a single assert.
 const TEMPLATE_SCRIPT = panelScript();
 const BUILT_SCRIPT = panelScript({ from: BUILT });
-// OSS tree には module が無い。無いときは注入版を base で代用する。
-// host 側では従来どおり注入版を読む。
+// The OSS tree has no module; fall back to base for the injected copy there.
+// Host-side keeps reading the injected copy as before.
 const HAS_MODULE = fs.existsSync(path.join(REPO, "src/commercial/panel-module.js"));
 const MODULE_SCRIPT = HAS_MODULE ? panelScript({ module: true }) : BUILT_SCRIPT;
 const COPIES = HAS_MODULE ? [
@@ -267,9 +267,9 @@ const URL_KEY = "umeboshi-ask:worker-url:v1";
 const TOKEN_KEY = "umeboshi-ask:worker-token:v1";
 const REFRESH_KEY = "umeboshi-ask:refresh:v1";
 const OFFICIAL = "https://umeboshi-ask.umeboshi-ask.workers.dev";
-// drive() が window に焼く外部フック。設定が空のときはここが効く。
+// External hook baked into window by drive(). Takes effect when settings are empty.
 const HOOK = "https://test.example";
-// ログイン（redeem）で得るアクセストークン。既定 endpoint の既有挙動の照合に使う。
+// Access token gained via login (redeem). Used to match existing default-endpoint behavior.
 const LOGIN_TOKEN = "a1";
 const chatSse = async (url) => (url.endsWith("/api/ask/chat") ? sseResp([sseLine({ type: "done" })]) : null);
 const redeemOK = async (url) => (url.endsWith("/api/auth/redeem")
@@ -280,25 +280,25 @@ const enSettings = { "umeboshi-ask:settings:v1": JSON.stringify({ version: 1, se
 
 describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
   it("接続先は呼び出しごとに「設定 > フック > 既定」の順に解決する", async () => {
-    // 設定が空ならフック（従来どおり）。chat もモデル一覧も同じ解決を使う。
+    // Empty settings fall back to the hook (as before). Chat and model list share one resolver.
     const hook = await drive({ consent: true, onFetch: chatSse });
     await hook.ask("why");
     assert.equal(hook.chatCalls().at(-1).url, HOOK + "/api/ask/chat");
     assert.equal(hook.calls.some((c) => c.url === HOOK + "/api/ask/models"), true,
       "モデル一覧がフックを見ていない");
 
-    // 設定の Worker URL はフックに勝つ。スクリプト読み込み後に保存した値でも
-    // 次の送信から効く（読み込み時の snapshot にしていない証拠）。
+    // The settings Worker URL beats the hook. A value saved after script load takes
+    // effect from the next send (proof of no load-time snapshot).
     const set = await drive({ consent: true, onFetch: chatSse });
     set.local.setItem(URL_KEY, "https://mine.example");
     await set.ask("why");
     assert.equal(set.chatCalls().at(-1).url, "https://mine.example/api/ask/chat");
 
-    // 保存済みの設定 URL は読み込み時の fetch（モデル一覧）にも効く。
+    // A saved settings URL also applies to the load-time fetch (model list).
     const models = await drive({ consent: true, localInit: { [URL_KEY]: "https://mine.example" } });
     assert.equal(models.calls.some((c) => c.url === "https://mine.example/api/ask/models"), true);
 
-    // 設定もフックも無ければ既定の公式 URL（導線維持）。
+    // No settings and no hook: default official URL (keeps the funnel working).
     const def = await drive({ consent: true, onFetch: chatSse });
     delete def.sandbox.UMEBOSHI_ASK_API_BASE;
     await def.ask("why");
@@ -307,32 +307,32 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
 
   it("接続先の解決は currentApiBase() の1箇所だけ（読み込み時の snapshot が無い）", () => {
     const code = SRC_CODE("src/components/askScaffold.ejs");
-    // 読み込み時の apiBase snapshot 変数は持たない。
+    // No load-time apiBase snapshot variable.
     assert.doesNotMatch(code, /\bapiBase\b/, "apiBase という名前の束が残っている");
-    // 既定 URL を参照するのは宣言と currentApiBase() の中だけ。
+    // DEFAULT_API_BASE is referenced only in its declaration and currentApiBase().
     assert.equal([...SRC("src/components/askScaffold.ejs").matchAll(/DEFAULT_API_BASE/g)].length, 2);
     assert.match(code, /function currentApiBase\(\)[\s\S]*?return DEFAULT_API_BASE;/);
-    // URL を作る base の全箇所が currentApiBase() 経由（usage は OS5a で module 側へ移った）。
+    // Every base that builds a URL goes through currentApiBase() (usage moved module-side in OS5a).
     for (const p of ['"/api/ask/chat"', '"/api/ask/models"']) {
       assert.ok(code.includes("currentApiBase() + " + p), p + " が currentApiBase() 経由でない");
     }
     assert.ok(code.includes("currentApiBase() + path"), "path 組み立てが currentApiBase() 経由でない");
-    // OS5c (#265): login 導線は module 側へ移った。base に login URL は無い。
-    // module の login が resolver 経由であることを見る。
-    // OSS tree には module が無いので、あるときだけ見る。
-    // host 側では従来どおり module を見る。
+    // OS5c (#265): the login flow moved module-side. Base carries no login URL.
+    // Check that the module login goes through the resolver.
+    // No module in the OSS tree, so check only when present.
+    // Host-side keeps checking the module as before.
     if (fs.existsSync(path.join(REPO, "src/commercial/panel-module.js"))) {
       assert.ok(SRC("src/commercial/panel-module.js").includes('currentApiBase() + "/api/auth/login?lang="'), "module の login URL が currentApiBase() 経由でない");
-      // module の usage も base の resolver 経由（自己ホストの設定が課金表示だけ効かないコピーを作らない）。
+      // The module usage also goes through the base resolver (so self-host settings apply to billing display too).
       const mod = SRC_CODE("src/commercial/panel-module.js");
       assert.ok(mod.includes('currentApiBase() + "/api/usage"'), "module の usage が currentApiBase() 経由でない");
     }
-    // Bearer の優先順位も1箇所に寄せる。
+    // Bearer precedence is centralized in one place too.
     assert.equal((code.match(/function bearerToken\(\)/g) || []).length, 1);
   });
 
   it("Bearer は設定のアクセストークンが優先。未設定ならログインのアクセストークン", async () => {
-    // 設定 token は chat でも保存系（authFetch）でもログイン token より優先する。
+    // A settings token wins over the login token for both chat and saving (authFetch).
     const set = await drive({
       consent: true,
       localInit: { [URL_KEY]: "https://mine.example", [TOKEN_KEY]: "s3cret" },
@@ -341,9 +341,9 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
     await set.ask("why");
     assert.equal(set.chatCalls().at(-1).init.headers.Authorization, "Bearer s3cret");
 
-    // OSS tree には module（login の実体）が無いので、以下は host 側だけ。
-    // host 側では従来どおりログイン token の優先順位を見る。
-    // 未設定なら redeem で得たログインのアクセストークン（既定 endpoint の挙動は不変）。
+    // No module (the login body) in the OSS tree, so the rest is host-side only.
+    // Host-side keeps checking the login-token precedence as before.
+    // Without settings, the access token from redeem is used (default-endpoint behavior unchanged).
     if (HAS_MODULE) {
       const login = await drive({ consent: true, onFetch: chatOrRedeem });
       await login.redeem();
@@ -351,16 +351,16 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
       assert.equal(login.chatCalls().at(-1).init.headers.Authorization, "Bearer " + LOGIN_TOKEN);
     }
 
-    // どちらも無ければ Bearer は付けない（匿名質問はそのまま動く）。
+    // With neither token, no Bearer is attached (anonymous questions keep working).
     const anon = await drive({ consent: true, onFetch: chatSse });
     await anon.ask("why");
     assert.equal(anon.chatCalls().at(-1).init.headers.Authorization, undefined);
 
-    // OSS tree には module（usage の実体）が無いので、以下は host 側だけ。
-    // host 側では従来どおり usage の優先順位を見る。
+    // No module (the usage body) in the OSS tree, so the rest is host-side only.
+    // Host-side keeps checking the usage precedence as before.
     if (!HAS_MODULE) return;
 
-    // usage も同じ優先順位で Authorization を付ける（usage は OS5a で module 側なので注入版で流す）。
+    // usage attaches Authorization with the same precedence (usage is module-side since OS5a, so drive the injected build).
     const usage = await drive({
       consent: true,
       localInit: { [TOKEN_KEY]: "s3cret" },
@@ -395,7 +395,7 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
       }
       return chatSse(url);
     };
-    // ログインはしない。設定のトークンだけで Bearer が乗る。
+    // No login. The settings token alone supplies the Bearer.
     const h = await drive({
       consent: true,
       localInit: { [URL_KEY]: "https://mine.example", [TOKEN_KEY]: "s3cret" },
@@ -408,8 +408,8 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
     assert.equal(h.els["umeboshi-ask-thread-status"].textContent, "");
     assert.match(textOf(h.els["umeboshi-ask-thread-list"]), /レイリー散乱/);
 
-    // 再読み込み（vm を作り直す＝idbMem も空）で threads GET が叩かれ、
-    // 保存した解答が Thread に再表示される。
+    // Reload (recreate the vm, so idbMem is empty too) hits threads GET, and the
+    // saved answer reappears in the Thread.
     const again = await drive({
       consent: true,
       localInit: { [URL_KEY]: "https://mine.example", [TOKEN_KEY]: "s3cret" },
@@ -428,7 +428,7 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
     const ja = await drive({ consent: true, localInit: { [TOKEN_KEY]: "wrong" }, onFetch: wrong });
     await ja.ask("why");
     assert.match(ja.els["umeboshi-ask-stream-status"].textContent, /設定のアクセストークンを確認してください/);
-    // 既定 endpoint の汎用失敗文ではない理由として出す。
+    // Shown because it is not the generic default-endpoint failure text.
     assert.doesNotMatch(ja.els["umeboshi-ask-stream-status"].textContent, /送信できませんでした/);
 
     const en = await drive({
@@ -448,8 +448,8 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
   });
 
   it("設定 token がある 401 はログインの refresh を試さない（自己ホストでは無駄）", async () => {
-    // OSS tree には module（login・billing・usage の実体）が無いので host 側だけ。
-    // host 側では従来どおり refresh の抑止と試行を見る。
+    // No module (login/billing/usage bodies) in the OSS tree, so host-side only.
+    // Host-side keeps checking refresh suppression and attempts as before.
     if (!HAS_MODULE) return;
     let refreshN = 0;
      const onFetch = async (url) => {
@@ -463,21 +463,21 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
     const h = await drive({
       consent: true,
       script: MODULE_SCRIPT,
-      // refresh token は持っているが、設定 token があるので refresh は無駄。
+      // Holds a refresh token, but refresh is wasted while a settings token exists.
       localInit: { [TOKEN_KEY]: "s3cret", [REFRESH_KEY]: "r1" },
       onFetch,
     });
     await tick(12);
-    // 起動直後の silentRefresh（refresh token 持ち）は既定挙動。billing 401 の前で数え直す。
+    // The boot-time silentRefresh (holding a refresh token) is default behavior. Recount before the billing 401.
     refreshN = 0;
     await h.redeem();
-    // billing は module 側。authFetch 経由で 401 を踏ませる（/api/billing/link）。
+    // billing is module-side. Force a 401 through authFetch (/api/billing/link).
     refreshN = 0;
     h.els["umeboshi-ask-billing-btn"].click();
     await tick(20);
     assert.equal(refreshN, 0, "設定 token があるのに refresh を試した");
 
-    // usage の 401 経路も同じガードを持つ（設定 token が無いときだけ試す。usage は module 側）。
+    // The usage 401 path carries the same guard (try refresh only without a settings token; usage is module-side).
     const g = await drive({
       consent: true,
       script: MODULE_SCRIPT,
@@ -496,8 +496,8 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
     assert.ok(refreshN >= 1, "設定 token が無く refresh token があれば refresh は従来どおり試す");
   });
   it("既定（公式 URL）のままの panel の既存挙動が不変", async () => {
-    // OSS tree には module（login の実体）が無いので host 側だけ。
-    // host 側では従来どおり公式 URL の既存挙動を見る。
+    // No module (the login body) in the OSS tree, so host-side only.
+    // Host-side keeps checking the official-URL behavior as before.
     if (!HAS_MODULE) return;
     const h = await drive({ consent: true, onFetch: chatOrRedeem });
     delete h.sandbox.UMEBOSHI_ASK_API_BASE;
@@ -506,7 +506,7 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
     assert.equal(h.chatCalls().at(-1).url, OFFICIAL + "/api/ask/chat");
     assert.equal(h.chatCalls().at(-1).init.headers.Authorization, "Bearer " + LOGIN_TOKEN);
 
-    // 公式 URL のまま threads の保存・再読み込みもログイントークンで通る。
+    // Threads save/reload on the official URL also pass with the login token.
     let postBearer = "";
     const onFetch = async (url, init) => {
       const r = await redeemOK(url);
@@ -567,9 +567,9 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
       });
 
       it(name + ": currentApiBase/bearerToken の解決が同じ形で入っている", () => {
-        // 注入版は billing module の script seam が入るので本文は増えるが、
-        // 接続先・Bearer の解決そのものは各コピーで同一でなければならない。
-        // module は自分の呼び出しも base の resolver に寄せる（usage・課金表示）。
+        // The injected build grows via the billing module script seam, but the
+        // target/Bearer resolution itself must stay identical across copies.
+        // The module routes its own calls through the base resolver too (usage, billing display).
         const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
         const def = (code, fn) => {
           const m = code.match(new RegExp("function " + fn + "\\(\\)[\\s\\S]*?\\n  }"));
@@ -590,11 +590,11 @@ describe("#258 OS2c URL/token で自分の Worker に繋がる", () => {
     }
 
     it("注入版の billing module も接続先の解決を base の resolver に寄せる", () => {
-      // OSS tree には module が無いので host 側だけ。
-      // host 側では従来どおり module の resolver 寄せを見る。
+      // No module in the OSS tree, so host-side only.
+      // Host-side keeps checking the module resolver routing as before.
       if (!HAS_MODULE) return;
-      // module が自分で URL を組み立て直すと、自己ホストの設定が課金表示だけ
-      // 効かないコピーが生まれる。usage の呼び出しは currentApiBase() 経由。
+      // If the module rebuilt URLs itself, self-host settings would silently miss
+      // billing display only. The usage call goes through currentApiBase().
       const mod = SRC("src/commercial/panel-module.js");
       assert.ok(mod.includes('currentApiBase() + "/api/usage"'), "module の usage が resolver 経由でない");
       assert.ok(mod.includes("bearerToken()"), "module が Bearer の解決を素通りしている");

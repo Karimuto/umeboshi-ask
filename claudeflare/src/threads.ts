@@ -1,8 +1,8 @@
-// S6: Thread保存 (Message単位1件ずつ・titleなし・thinking保存なし)。
-// KV: Thread本体 `ask:thread:{userId}:{cardId}`・index `ask:thread:index:{userId}` (50件)。
-// 上限: 1 Thread 100 Message・1 Message 20000文字 (question+answer合算)。
-// 照合: identity の userId を正、x-card-idヘッダ不一致は400・所有者不一致は403。削除は物理削除即時。
-// 保存済みMessageはLLMに送らない (chat payloadに含めない。ADR 0006)。
+// S6: Thread storage (one Message at a time, no title, no thinking saved).
+// KV: thread body `ask:thread:{userId}:{cardId}`, index `ask:thread:index:{userId}` (50 entries).
+// Limits: 100 Messages per Thread, 20000 chars per Message (question+answer).
+// Match: identity userId wins; x-card-id header mismatch is 400, owner mismatch is 403. Delete is immediate.
+// Saved messages never go to the LLM (excluded from chat payload. ADR 0006).
 
 export const THREAD_MSG_MAX = 100;
 export const THREAD_MSG_CHARS = 20000;
@@ -50,13 +50,13 @@ export function newMessageId(): string {
       return `m_${c.randomUUID().replace(/-/g, "").slice(0, 24)}`;
     }
   } catch {
-    // フォールバックへ
+    // Fall through to fallback
   }
   const r = Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0");
   return `m_${Date.now().toString(36)}${r}`;
 }
 
-/** CardIDはAnki 25.09.2+の{{CardID}}置換結果。未置換・空・128文字超を拒否する。 */
+/** CardID is the Anki 25.09.2+ {{CardID}} substitution result. Reject unsubstituted/empty/over-128-char. */
 export function isValidCardId(cardId: unknown): cardId is string {
   if (typeof cardId !== "string") return false;
   const t = cardId.trim();
@@ -65,7 +65,7 @@ export function isValidCardId(cardId: unknown): cardId is string {
   return true;
 }
 
-/** x-card-idヘッダとpath/bodyのCardID照合。不一致は400 (D3)。欠損ヘッダは不問。 */
+/** Match x-card-id header against path/body CardID. Mismatch is 400 (D3). Missing header is ignored. */
 export function cardIdMismatch(headerCardId: string | null, cardId: string): boolean {
   if (headerCardId === null) return false;
   return headerCardId.trim() !== cardId;
@@ -104,7 +104,7 @@ async function loadThreadRaw(store: ThreadStore, cardId: string): Promise<Thread
   try {
     const parsed = JSON.parse(raw) as Partial<ThreadBody>;
     if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.messages)) return null;
-    // 所有者は本体のownerIdを正とする (キー分離では403が観測できないためcardIdキーのみ)。
+    // Owner comes from the body ownerId (per-cardId keys cannot observe 403, so cardId key only).
     if (typeof parsed.ownerId !== "string" || parsed.ownerId === "") return null;
     return {
       cardId,
@@ -136,7 +136,7 @@ async function loadIndexRaw(store: ThreadStore, userId: string): Promise<ThreadI
   }
 }
 
-/** indexを先頭Touch・50件cap。count 0のカードはindexから外す。 */
+/** Touch index to front, 50-entry cap. Cards with count 0 drop out of the index. */
 async function touchIndex(
   store: ThreadStore,
   userId: string,
@@ -157,7 +157,7 @@ export interface ThreadResult {
   body: Record<string, unknown>;
 }
 
-/** GET thread。存在しなければ空Threadを200で返す (初回表示のため)。 */
+/** GET thread. Missing thread returns an empty Thread with 200 (for first view). */
 export async function getThread(
   store: ThreadStore,
   ownerId: string,
@@ -180,7 +180,7 @@ export async function getThread(
   };
 }
 
-/** POST message (1件ずつ保存。thinkingは受け取らない)。 */
+/** POST message (one at a time. Thinking is not accepted). */
 export async function postMessage(
   store: ThreadStore,
   ownerId: string,
@@ -222,7 +222,7 @@ export async function postMessage(
   return { status: 201, body: { message } };
 }
 
-/** PATCH message (編集。question/answerのどちらか必須)。 */
+/** PATCH message (edit. question or answer required). */
 export async function patchMessage(
   store: ThreadStore,
   ownerId: string,
@@ -270,7 +270,7 @@ export async function patchMessage(
   return { status: 200, body: { message: updated } };
 }
 
-/** DELETE message (復元なし・物理削除即時。0件になればThread本体も消す)。 */
+/** DELETE message (no restore, immediate delete. Empty Thread body is removed too). */
 export async function deleteMessage(
   store: ThreadStore,
   ownerId: string,
@@ -305,7 +305,7 @@ export async function deleteMessage(
   return { status: 200, body: { deleted: true } };
 }
 
-/** GET index (50件cap・新しい順)。 */
+/** GET index (50-entry cap, newest first). */
 export async function getThreadIndex(store: ThreadStore, ownerId: string): Promise<ThreadResult> {
   const entries = await loadIndexRaw(store, ownerId);
   return { status: 200, body: { threads: entries.slice(0, THREAD_INDEX_MAX) } };

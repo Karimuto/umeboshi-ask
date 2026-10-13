@@ -1,19 +1,20 @@
-// S12: 設定export/import（別端末移行）。アカウントタブから全設定をCloudにexportし、
-// 別端末でimportして再現する。匿名は対象外（フロントでボタン非表示＋ログイン誘導）。
-// KVキーは Thread/index/credits/auth と衝突しない `ask:settings:{userId}` に隔離。
-// PRD §6: KVに「設定」を持つ。保存済みMessage・Threadとは別キー。
+// S12: settings export/import (move to another device). Export all settings
+// from the account tab to the Cloud, import on another device to restore. Anon
+// is out of scope (button hidden on the front, login prompt). KV keys live under
+// `ask:settings:{userId}` so they never collide with Thread/index/credits/auth.
+// PRD §6: KV holds "settings", on keys separate from saved Message/Thread.
 import type { AuthStore } from "./stores";
 import { isEffortValue } from "./models";
 
 export const SETTINGS_KEY_PREFIX = "ask:settings:";
-/** 設定KVのTTL（S6 ThreadStoreに合わせた10年＝実質永続。memoryStoreの満了回避）。 */
+/** Settings KV TTL (10 years like S6 ThreadStore = effectively forever. Avoids memoryStore expiry). */
 export const SETTINGS_TTL_SEC = 10 * 365 * 24 * 60 * 60;
 export const SETTINGS_MAX_BYTES = 200 * 1024;
-/** customs件数上限（フロントは無制限追加だがCloud保存はここで頭打ち）。 */
+/** Max customs (front allows unlimited adds, Cloud storage caps here). */
 export const SETTINGS_CUSTOMS_MAX = 100;
-/** ラベル上限（フロントinputの実用範囲）。 */
+/** Label max (practical range of the front input). */
 export const SETTINGS_LABEL_MAX = 200;
-/** プロンプト本文上限（1 Message 20,000文字に合わせる）。 */
+/** Prompt body max (matches 20,000 chars per Message). */
 export const SETTINGS_BODY_MAX = 20_000;
 
 export function settingsKey(userId: string): string {
@@ -37,7 +38,7 @@ export interface StoredSettings {
   lang: "auto" | "ja" | "en";
   prompts: Record<"why" | "what" | "significance" | "origin" | "eli5", StoredPrompt>;
   customs: StoredCustom[];
-  /** #66 モデルごとのEffort記憶 {modelId: effort}。別端末移行の対象。 */
+  /** #66 Per-model effort memory {modelId: effort}. Moves with device transfer. */
   efforts: Record<string, string>;
 }
 
@@ -59,8 +60,8 @@ function clampStr(v: unknown, max: number): string | null {
 }
 
 /**
- * フロントの mergeSettings と同じ正規化をサーバ側で再実施する。
- * 型・上限違反は null（400/413）を返す。欠損キーも不可（フロントは常に全量送信）。
+ * Re-run the front mergeSettings normalization on the server side.
+ * Type/limit violations return null (400/413). Missing keys fail too (front always sends all).
  */
 export function normalizeSettings(input: unknown): StoredSettings | null {
   if (!isRecord(input)) return null;

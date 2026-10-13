@@ -1,6 +1,6 @@
-// #260 OS3b: threads はコア入口 (src/core.ts) の route。認証はアクセストークン
-// (ASK_TOKEN) 1本だけ（JWT の経路は完全版 src/index.ts 側）。「所有者不一致は403」
-// は2つの JWT identity が必要なので完全版 (test/full/threads-owner.test.ts) に移した。
+// #260 OS3b: threads is a core-entry (src/core.ts) route. Auth is the access token
+// (ASK_TOKEN) alone (the JWT path lives on the full-build src/index.ts side). "Owner mismatch
+// is 403" needs two JWT identities, so it moved to the full build (test/full/threads-owner.test.ts).
 import { describe, expect, it } from "vitest";
 import { handleCoreRequest, type CoreEnv } from "../../src/core";
 import { memoryStore } from "../../src/stores";
@@ -248,8 +248,8 @@ describe("S6 Thread保存 (Message単位・titleなし・thinkingなし)", () =>
     expect(body.threads[0]!.cardId).toBe("idx50");
   });
 
-  // #100 穴1: ACAOの有無だけを確かめるでは不十分。
-  // 許可リストのOriginでは付き、リスト外では付かないことを見る。
+  // #100 hole 1: checking ACAO presence alone is not enough.
+  // Allowlisted Origins get it; off-list Origins do not.
   it("Thread系は許可リストのOriginにだけCORSヘッダを付ける", async () => {
     const store = memoryStore();
     const e = env();

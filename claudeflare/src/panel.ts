@@ -1,20 +1,20 @@
-// UM1 (#183): panel の版と停止旗を返す照会口。仕様は spec #188。
+// UM1 (#183): lookup returning the panel version and stop flag. Spec is #188.
 //
-// Worker が返すのは版番号と停止旗だけ。本文は返さない。
-// 正の panel は add-on 同梱の addon/templates/inject.html であり、
-// 照会の答えは UM2 (#184) の起動時 upgrade が同梱との比較に使う。
+// The Worker returns only version and stop flag. No body text.
+// The current panel is addon/templates/inject.html bundled with the add-on;
+// UM2 (#184) startup upgrade compares the bundled copy against this answer.
 //
-// - 版は SemVer（MAJOR.MINOR.PATCH の数字3点）。前後比較は comparePanelVersion。
-// - 印（`<!-- umeboshi-ask:begin v1 -->`）は身元確認のまま凍結し、上げない。
-// - 停止旗（stopped）が真のとき add-on は新版を拾わない。
-// - 自力デプロイ（KVなし）は版も旗も持たないので、照会は unavailable を返す。
-//   書換え自体は UM2 側が apiBase の不一致で止める（ここでは止めない）。
+// - Version is SemVer (three MAJOR.MINOR.PATCH numbers). Compare with comparePanelVersion.
+// - Marker (`<!-- umeboshi-ask:begin v1 -->`) stays frozen for identity; never bump it.
+// - While the stop flag (stopped) is true, the add-on never picks up new versions.
+// - Self-host without KV has neither version nor flag, so lookup returns unavailable.
+//   Rewriting itself stops on the UM2 side via apiBase mismatch (never stops here).
 
-/** 照会口が KV から読むふたつの鍵。 */
+/** Two KV keys the lookup reads. */
 export const PANEL_RELEASE_KEY = "ask:panel:release:v1";
 export const PANEL_STOP_KEY = "ask:panel:stop:v1";
 
-/** 照会口の応答。本文は含まない。 */
+/** Lookup response. No body text. */
 export interface PanelRelease {
   version: string;
   stopped: boolean;
@@ -29,19 +29,19 @@ export interface PanelStore {
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
 
-/** SemVer（数字3点）の検査。先行ゼロ・空・4点・接尾辞は受けない。 */
+/** SemVer check (three numbers). Rejects leading zeros, empty, four parts, suffixes. */
 export function isPanelVersion(v: unknown): v is string {
   if (typeof v !== "string") return false;
   const m = SEMVER_RE.exec(v);
   if (!m) return false;
-  // 数値化して戻せるものだけ通す（"01" のような先行ゼロを落とす）。
+  // Only numeric round-trippable parts pass (drops leading zeros like "01").
   const parts = [m[1], m[2], m[3]].map(Number);
   return parts.every((n) => Number.isSafeInteger(n) && n >= 0) && parts.join(".") === v;
 }
 
 /**
- * SemVer の前後比較。a が b より新しければ正、同じなら 0、古ければ負。
- * 壊れた版は比べられないので 0 を返す（呼び出し側は拾わない）。
+ * SemVer compare. Positive when a is newer than b, 0 when equal, negative when older.
+ * Broken versions cannot compare, so return 0 (callers never pick them up).
  */
 export function comparePanelVersion(a: string, b: string): number {
   if (!isPanelVersion(a) || !isPanelVersion(b)) return 0;
@@ -54,7 +54,7 @@ export function comparePanelVersion(a: string, b: string): number {
   return 0;
 }
 
-/** 照会口の読み取り。未設定・壊れは null（呼び出し側が unavailable を返す）。 */
+/** Lookup read. Unset/broken is null (caller returns unavailable). */
 export async function readPanelRelease(store: PanelStore | undefined): Promise<PanelRelease | null> {
   if (!store) return null;
   const raw = await store.get(PANEL_RELEASE_KEY);
@@ -68,7 +68,7 @@ export async function readPanelRelease(store: PanelStore | undefined): Promise<P
     return null;
   }
   if (!isPanelVersion(rec.version)) return null;
-  // 停止旗は別鍵が正。版レコード内の stopped は読まない（書いた覚えのない旗は倒さない）。
+  // The stop flag lives on its own key. Never read stopped from the version record (never honor a flag nobody wrote).
   const stopRaw = await store.get(PANEL_STOP_KEY);
   return {
     version: rec.version,
@@ -78,9 +78,9 @@ export async function readPanelRelease(store: PanelStore | undefined): Promise<P
 }
 
 /**
- * 運用側の書き込み（HOST の KV 操作・テスト用）。照会の応答形そのまま。
- * stopped は別鍵にだけ書く。版レコード内の stopped は読まない約束のため、
- * ここでも版レコード側には stopped を書かない。
+ * Hosted-side write (HOST KV ops, tests). Same shape as the lookup response.
+ * stopped goes to its own key only. The version record never carries stopped,
+ * by the promise never to read it there.
  */
 export async function writePanelRelease(
   store: PanelStore,

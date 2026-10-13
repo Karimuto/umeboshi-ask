@@ -4,13 +4,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// #93 保存済み解説の見出し行（▶/▼ の行）の文字サイズと左端の固定。
-// Anki 本体の card CSS（_aqt/data/web/css/reviewer.css と webview.css）には
-// .isWin button{font-size:12px} と button{margin:1em .5em} が入る。
-// class 1個 (0,1,0) の指定は必ず負けるので、ID を含むセレクタであること、
-// margin を 0 にしていること、rem ではなく em で本文比に紐づけていること、
-// 見出しが本文 16px から +10〜+15% であることを生成済み Back Template で固定する。
-// 変異注入（ID を外す / em を px にする / margin を消す）で赤くなることを実測済み。
+// #93 Saved-explanation heading row (▶/▼ line): pin size and left edge.
+// Anki card CSS (_aqt/data/web/css/reviewer.css, webview.css) ships
+// .isWin button{font-size:12px} and button{margin:1em .5em}.
+// A single class (0,1,0) always loses, so require an ID in the selector,
+// margin 0, em (not rem) tied to body size, and heading at +10-+15%
+// over 16px body text in the built Back Template.
+// Verified red under mutation (drop ID / em->px / remove margin).
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, "..");
@@ -33,7 +33,7 @@ function value(css, prop) {
   return m[1].trim();
 }
 
-// Anki の card CSS に対して class 1個 (0,1,0) で負けるのが本次不具合の原因。
+// Single class (0,1,0) loses to Anki card CSS; that caused this bug.
 const HEAD_SELECTOR = "#umeboshi-ask .umeboshi-ask-thread-head";
 const HEAD = decls(HEAD_SELECTOR);
 
@@ -48,7 +48,7 @@ describe("#93 保存済み解説の見出し", () => {
   it("Anki の button{margin:1em .5em} を上書きして左端を本文にそろえる", () => {
     assert.equal(value(HEAD, "margin"), "0");
     const pad = value(HEAD, "padding").split(/\s+/);
-    // shorthand が 2 値（上下 左右）なら左右は同じ値。
+    // With 2-value shorthand (vertical horizontal), both sides share one value.
     const sides = pad.length === 2 ? [pad[1], pad[1]] : [pad[1], pad[3]];
     assert.deepEqual(sides, ["0", "0"], "左右 padding は 0");
   });

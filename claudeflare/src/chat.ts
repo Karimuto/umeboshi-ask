@@ -1,17 +1,19 @@
-// S2: Why?→回答ストリーミング最小ループ。上流はOpenRouter単線（ADR 0015）。
-// 上流SSEを StreamEvent (thinking/content/switched/done+error) に寄せる。
-// S8: Allowlist外modelは404＋fallback id、上流404は同一上流の安い選択可モデルへ自動切替し
-// 先頭にswitched (charged:true＋effort) を流す。S4(匿名credits)は含めない。
-// S9: 15秒完全無音 (thinking・contentともになし) でのみ別モデルへ1度だけ自動切替し
-// 先頭にswitched (reason:"timeout", charged:true＋effort) を流す。thinking到達後は待つ。
-// 切替・中断の消費は実cost通りユーザ負担・表示なし (無音attemptはabortして破棄。精算はcharged:trueを元にHOST/S10側)。
-// S3: questionはテンプレ＋カード文脈込みの組成文のため上限8000（素の質問2000＋文脈）。
-// - max_tokens 8192一律（#94: effort で変えない。考え中だけで使い切ると本文0になるため、
-//   切れたときは done じゃなく error で返す）
-// - LLM出力はMarkdown直接（JSON repairなし。素通しのみ）
-// - 順序保証 thinking→content→done（上流到着順を保ち、doneを末尾に1回）
-// #66: Effortは reasoning.effort で送る。未指定は各モデルのdefault effort（選択なしは送らない）。
-// 不正な組み合わせは400 invalid_effortで止める。自動切替先は切替先のdefault effort。
+// S2: minimal Why?-answer streaming loop. Upstream is the single OpenRouter line (ADR 0015).
+// Map upstream SSE onto StreamEvent (thinking/content/switched/done+error).
+// S8: off-allowlist model is 404 + fallback id; upstream 404 auto-switches to the
+// cheapest selectable model on the same upstream and emits switched first
+// (charged:true + effort). Excludes S4 (anon credits).
+// S9: only after 15s of total silence (neither thinking nor content) switch once
+// to another model and emit switched first (reason:"timeout", charged:true + effort).
+// After thinking arrives, keep waiting. Switch/interrupt usage bills actual cost
+// with no display (silent attempt is aborted and dropped. Settle from charged:true on HOST/S10).
+// S3: question caps at 8000 (raw question 2000 + context) as it composes template + card context.
+// - max_tokens flat 8192 (#94: never varies by effort. Reasoning alone could eat it and leave zero body,
+//   so truncation returns error, not done)
+// - LLM output is Markdown verbatim (no JSON repair. Pass-through only)
+// - order: thinking→content→done (keep upstream arrival order, done once at end)
+// #66: send effort via reasoning.effort. Unspecified uses each model's default effort (no-choice sends none).
+// Invalid combos stop with 400 invalid_effort. Auto-switch target uses the target's default effort.
 import {
   BUNDLE_MODELS,
   cheapestSelectable,
@@ -25,12 +27,12 @@ import {
 export const CHAT_MAX_TOKENS = 8192;
 export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const CHAT_QUESTION_MAX = 8000;
-/** #35: OpenRouterへ毎回先頭に付けるsystem prompt。振る舞いの土台。 */
+/** #35: system prompt prepended for every OpenRouter call. Behavior base. */
 export const CHAT_SYSTEM_PROMPT = `# Role
 You are a professor who is exceptionally clear and easy to understand. Based on the provided Problem Statement, Supplementary Information, and User's Question, create a response that deepens the user's understanding of their question.`;
-/** S9: thinking・contentとも来ない完全無音が続いたら別モデルへ切替えるdeadline。 */
+/** S9: deadline switching to another model after total silence (no thinking, no content). */
 export const SILENCE_TIMEOUT_MS = 15_000;
-/** #30: 上流エラー診断用に残すbody先頭の最大文字数。 */
+/** #30: max head chars of the upstream error body kept for diagnosis. */
 export const UPSTREAM_ERROR_PREVIEW_MAX = 500;
 
 export interface ChatEnv {
@@ -62,17 +64,17 @@ function recordOf(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
-/** 上流1行の解析結果。finish_reason は「上流がそこで止めた理由」。 */
+/** One parsed upstream line. finish_reason is "why upstream stopped there". */
 export interface UpstreamChunk {
-  /** 流すイベント列。到着順を保つ。 */
+  /** Event rows to emit. Keeps arrival order. */
   events: { type: string; delta?: string }[];
-  /** choices[0].finish_reason。該当なしは null。 */
+  /** choices[0].finish_reason. Null when absent. */
   finishReason: string | null;
-  /** #169: usage.cost（USD）。正の有限数のときだけ値、他は null。tokens 系は持たない。 */
+  /** #169: usage.cost (USD). Set only for positive finite numbers, else null. Never carries tokens. */
   cost: number | null;
 }
 
-/** SSEの生行1行の data payload をparseする。該当なし・壊れ行は null。 */
+/** Parse the data payload of one raw SSE line. Null for missing/broken lines. */
 function ssePayload(rawLine: string): unknown {
   const line = rawLine.trim();
   if (!line.startsWith("data:")) return null;
@@ -81,22 +83,22 @@ function ssePayload(rawLine: string): unknown {
   try {
     return JSON.parse(payload);
   } catch {
-    return null; // 壊れた行は捨てる（欠落ではなく破損行のスキップ）
+    return null; // Drop broken lines (skip corrupt lines, not missing ones)
   }
 }
 
-/** 上流1行から (thinking/content イベント, finish_reason) を取る。 */
+/** Take (thinking/content events, finish_reason) from one upstream line. */
 export function parseSseLine(rawLine: string): UpstreamChunk {
   const body = recordOf(ssePayload(rawLine));
-  // #169: 終端の上流 usage フレームは choices の外（直下 usage.cost）に載る。
-  // OpenRouter は毎回自動で付ける（stream_options は非推奨のため送らない）。
-  // 正の有限数のときだけ採用し、tokens 系は見ない・運ばない。
+  // #169: terminal upstream usage frame sits outside choices (usage.cost at top level).
+  // OpenRouter always attaches it (stream_options is deprecated, so never sent).
+  // Take only positive finite numbers; never read or carry tokens.
   const rawCost = recordOf(body?.["usage"])?.["cost"];
   const cost = typeof rawCost === "number" && Number.isFinite(rawCost) && rawCost > 0 ? rawCost : null;
   const choices = body?.["choices"];
   const choice = Array.isArray(choices) ? recordOf(choices[0]) : null;
   if (!choice) return { events: [], finishReason: null, cost };
-  // #94: finish_reason はChoices側。delta が無くても finish_reason だけが載る行がある。
+  // #94: finish_reason lives on the choices side. Lines may carry only finish_reason with no delta.
   const finishReason = stringField(choice["finish_reason"]);
   const deltaRecord = recordOf(choice["delta"]);
   if (!deltaRecord) return { events: [], finishReason, cost };
@@ -110,29 +112,29 @@ export function parseSseLine(rawLine: string): UpstreamChunk {
   return { events: out, finishReason, cost };
 }
 
-/** #94: finish_reason=length は max_tokens で切れた印。空で完了させず error にする。 */
+/** #94: finish_reason=length marks max_tokens truncation. Never finish empty as success; return error. */
 export const TRUNCATED_CODE = "truncated";
-/** #94: 「空で正常終了」（cut off=length ではないのに本文0文字）のときの code。
- *  実測: effort=low でも本文は出る（15/15 本文あり・reasoning 178〜696/8192）。
- *  よって low で空枠が出る事は max_tokens とは別原因で、切り詰め説では説明できない。 */
+/** #94: code for "empty success" (zero body text though not cut off by length).
+ *  Measured: effort=low still returns body (15/15 with body, reasoning 178-696/8192).
+ *  So empty slots on low come from something other than max_tokens; the truncation theory cannot explain them. */
 export const EMPTY_ANSWER_CODE = "empty_answer";
 
 
 export interface ChatSettled {
-  /** 完了 attempt の生cost。本文0の終端では null だけが来る（全額返金の印）。 */
+  /** Raw cost of the finished attempt. Null-only at zero-body ends (full-refund mark). */
   cost: number | null;
-  /** カードへ流した本文の文字数。0 のまま終われば予約全額返金の印。 */
+  /** Body chars streamed to the card. Staying 0 marks a full reservation refund. */
   contentChars: number;
 }
 
 export interface ChatModels {
-  /** 解決済み一覧 (安い順)。未指定時はbundle固定5モデル。 */
+  /** Resolved list (cheapest first). Fixed 5-model bundle when unspecified. */
   models?: ResolvedModel[];
-  /** S9無音deadline上書き (ms)。テスト注入用。未指定時はSILENCE_TIMEOUT_MS。 */
+  /** S9 silence-deadline override (ms). Test injection. Defaults to SILENCE_TIMEOUT_MS. */
   timeoutMs?: number;
-  /** #171: 終端確定後の精算口。ストリーム終端後に呼ばれる。 */
+  /** #171: settle hook after the end is fixed. Called after stream end. */
   onSettled?: ((settled: ChatSettled) => void) | undefined;
-  /** #172: done に載せる確定額の計算口。予約額が起点で、実費が確定すれば実費へ寄せる。 */
+  /** #172: hook computing the fixed amount on done. Reserved amount is the base; converges to actuals once fixed. */
   chargedFor?: ((cost: number | null) => number | null) | undefined;
 }
 
@@ -147,15 +149,15 @@ interface PrefixState {
   decoder: TextDecoder;
   buffer: string;
   events: { type: string; delta?: string }[];
-  /** #94: 無音待ち中に届いた行の finish_reason。後のストリームに持ち越す。 */
+  /** #94: finish_reason of lines received during the silence wait. Carried to the later stream. */
   finishReason: string | null;
-  /** #169: 無音待ち中に届いた上流 usage.cost。同一 attempt の継続にだけ持ち越す（切替時は捨てる）。 */
+  /** #169: upstream usage.cost received during the silence wait. Carried only within the same attempt (dropped on switch). */
   cost: number | null;
 }
 
 export type ChatModelDecision = { id: string } | { unknownModel: true; fallback: string };
 
-/** body.model→確定モデルid。S4の匿名課金前段とhandleChat本体で同一判定にする。 */
+/** body.model to fixed model id. Same check for the S4 anon-billing pre-stage and handleChat itself. */
 export function selectChatModelId(
   rawModel: unknown,
   allowed: readonly ResolvedModel[],
@@ -172,7 +174,7 @@ export type ChatEffortDecision =
   | { effort: EffortValue | null }
   | { invalidEffort: true; model: string; supportedEfforts: readonly EffortValue[] };
 
-/** #66 body.effort→確定effort。未指定は切替先も含め各モデルのdefault effort（送らない選択なしはnull）。 */
+/** #66 body.effort to fixed effort. Unspecified uses each model's default effort incl. switch targets (no-send no-choice is null). */
 export function selectChatEffort(
   rawEffort: unknown,
   model: Pick<ResolvedModel, "id" | "supportedEfforts" | "defaultEffort" | "reasoningMandatory">,
@@ -231,7 +233,7 @@ export async function handleChat(
   if (!openRouterKey) {
     return Response.json({ error: "LLM not configured", code: "llm_not_configured" }, { status: 503 });
   }
-  /** #66 送信effort。自動切替先は切替先のdefault effort（Q9回答）。 */
+  /** #66 Effort to send. Auto-switch target uses the target default effort (Q9 answer). */
   function effortFor(targetId: string): EffortValue | null {
     if (targetId === model) return requestedEffort;
     const target = allowed.find((m) => m.id === targetId) ?? BUNDLE_MODELS.find((m) => m.id === targetId);
@@ -253,7 +255,7 @@ export async function handleChat(
     return JSON.stringify(payload);
   }
 
-  /** OpenRouter単線の送信先。 */
+  /** Single-OpenRouter-line destination. */
   async function postUpstream(modelId: string, signal: AbortSignal): Promise<Response> {
     return upstreamFetch(OPENROUTER_URL, {
       method: "POST",
@@ -266,8 +268,8 @@ export async function handleChat(
     });
   }
 
-  // attempt用AbortController。クライアントabortを上流へ伝播し、S9無音timeoutでもabortする。
-  // 使い終わったらdisposeでlistenerを外す (破棄済みattemptのabortに引っ張られないため)。
+  // Per-attempt AbortController. Propagates client abort upstream; also aborts on S9 silence timeout.
+  // Dispose removes the listener after use (stale attempts must not drag aborts along).
   function linkAttempt(): AttemptLink {
     const controller = new AbortController();
     const onAbort = (): void => controller.abort();
@@ -288,7 +290,7 @@ export async function handleChat(
     try {
       link.controller.abort();
     } catch {
-      // 二重abortは無視
+      // Ignore double abort
     }
   }
 
@@ -296,11 +298,11 @@ export async function handleChat(
     try {
       await reader.cancel();
     } catch {
-      // 二重cancelは無視
+      // Ignore double cancel
     }
   }
 
-  // 上流POST。msがnullでなければdeadline付き (S9)。timeout時は上流をabortしてtimeoutを返す。
+  // Upstream POST. With deadline when ms is not null (S9). On timeout aborts upstream and returns timeout.
   async function postAttempt(
     modelId: string,
     ms: number | null,
@@ -332,8 +334,8 @@ export async function handleChat(
     }
   }
 
-  // S9: first-byte相当 (thinking・contentのいずれか) をdeadlineまで待つ。
-  // 返却したreader/decoder/bufferはそのまま最終ストリームへ引き継ぐ (再送なし)。
+  // S9: wait for first-byte equivalent (thinking or content) until deadline.
+  // Hand the returned reader/decoder/buffer to the final stream as-is (no resend).
   async function waitFirstEvent(
     upstream: Response,
     deadline: number,
@@ -359,7 +361,7 @@ export async function handleChat(
     });
     if (request.signal.aborted) fireAbort();
     else request.signal.addEventListener("abort", onAbort, { once: true });
-    // 行は1度だけparseし、finish_reason も同時に拾う（#94）。
+    // Parse each line once, picking up finish_reason too (#94).
     const parseLine = (rawLine: string): void => {
       const chunk = parseSseLine(rawLine);
       if (chunk.finishReason !== null) finishReason = chunk.finishReason;
@@ -397,18 +399,18 @@ export async function handleChat(
   }
 
   function cancelled(): Response {
-    // #174: 中断は本文0なので予約全額返金の印だけ送る。
+    // #174: interrupt means zero body, so send only the full-reservation-refund mark.
     try {
       chatModels.onSettled?.({ cost: null, contentChars: 0 });
     } catch {
-      // 精算口の失敗で応答自体を壊さない
+      // Never break the response on a settle-hook failure
     }
     return Response.json({ error: "Request cancelled" }, { status: 499 });
   }
 
-  // #30: 上流レスポンスbodyの先頭だけ抜く。cloneを読んで原本のストリームを消費しない。
-  // 上流がrequest内容をechoしても秘密が出ないよう、APIキー・Bearer・質問全文をマスクする。
-  // 短い一致は診断文を壊すため一定長以上の秘密のみ対象。
+  // #30: take only the head of the upstream response body. Reads the clone, never consumes the original stream.
+  // Even if upstream echoes request content, mask API key/Bearer/full question so no secret leaks.
+  // Short matches would corrupt diagnostics, so only secrets of some length qualify.
   function scrubSecrets(text: string): string {
     const bearer = (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
     const escapedQuestion = JSON.stringify(question).slice(1, -1);
@@ -432,18 +434,18 @@ export async function handleChat(
     const message = error instanceof Error ? error.message : String(error);
     return scrubSecrets(message).slice(0, UPSTREAM_ERROR_PREVIEW_MAX);
   }
-  // #30: 上流失敗はモデル＋status＋body先頭をconsole.error（wrangler tailで見える化）し、
-  // 502のJSONにも安全な範囲（status＋body先頭＋モデル）で同梱する。APIキー・Bearer・質問は入れない。
+  // #30: log upstream failures as model+status+body head via console.error (visible in wrangler tail),
+  // and include the same safe range (status+body head+model) in the 502 JSON. Never API key/Bearer/question.
   async function upstreamError(modelId: string, status: number | null, preview: string): Promise<Response> {
     const head = preview.slice(0, UPSTREAM_ERROR_PREVIEW_MAX);
     console.error(
       `upstream error model=${modelId} status=${status === null ? "fetch_failed" : status} body=${head}`,
     );
-    // #174: 上流が応じる前に終わった。本文0なので予約全額返金の印だけ送る。
+    // #174: ended before upstream answered. Zero body, so send only the full-reservation-refund mark.
     try {
       chatModels.onSettled?.({ cost: null, contentChars: 0 });
     } catch {
-      // 精算口の失敗で応答自体を壊さない
+      // Never break the response on a settle-hook failure
     }
     return Response.json(
       { error: "LLM upstream error", model: modelId, upstreamStatus: status, upstreamPreview: head },
@@ -451,7 +453,7 @@ export async function handleChat(
     );
   }
 
-  // 切替先つきで上流POST (deadlineなし・単発)。失敗時はabort/errorをそのまま返す。
+  // POST with a switch target (no deadline, one shot). Pass abort/error through on failure.
   async function postFallback(
     fallbackId: string,
   ): Promise<{ kind: "ok"; res: Response; link: AttemptLink } | { kind: "abort" } | { kind: "error"; error: unknown }> {
@@ -462,10 +464,10 @@ export async function handleChat(
     return r;
   }
 
-  // S8切替先 (安い順で最初の選択可)。S9切替先と一致する場合が多いが、現行が最安の場合は異なる。
+  // S8 switch target (cheapest selectable first). Often matches the S9 target, but differs when current is cheapest.
   const timeoutMs = chatModels.timeoutMs ?? SILENCE_TIMEOUT_MS;
   const s8Fallback = cheapestSelectable(allowed)?.id ?? defaultChatModel();
-  // S9切替先 (現行以外の安い選択可)。nullなら単一モデルのみで切替不可→従来通り待つ。
+  // S9 switch target (cheapest selectable besides current). Null with a single model means no switch; keep waiting as before.
   const silenceFallbackId = nextFallbackModel(allowed, model)?.id ?? null;
   let switched: { from: string; to: string; reason: "model_404" | "timeout"; effort: EffortValue | null } | null = null;
   function markSwitched(from: string, to: string, reason: "model_404" | "timeout"): void {
@@ -482,13 +484,13 @@ export async function handleChat(
     const prefixEvents = prefix?.events ?? [];
     const prefixBuffer = prefix?.buffer ?? "";
     let finishReason: string | null = prefix?.finishReason ?? null;
-    // #169: 完了 attempt の上流 usage.cost（直近の正の有限値）。捨て attempt の分は prefix ごと捨てる。
+    // #169: upstream usage.cost of the finished attempt (latest positive finite value). Dropped attempts drop with the prefix.
     let upstreamCost: number | null = prefix?.cost ?? null;
-    // #94: カードへ流した本文の文字数。length 以外で本文0文字は「空で正常終了」。
+    // #94: body chars streamed to the card. Zero body outside length is "empty success".
     let contentChars =
       prefixEvents.reduce((n, ev) => (ev.type === "content" ? n + (ev.delta ?? "").length : n), 0);
 
-    // waitFirstEventで消費済みのreaderを引き継ぐ場合があるため、ここでは新規getReaderしない。
+    // waitFirstEvent may have consumed the reader, so never open a new getReader here.
     const reader = prefixReader ?? upstream.body!.getReader();
     const decoder = prefixDecoder ?? new TextDecoder();
     const encoder = new TextEncoder();
@@ -502,19 +504,19 @@ export async function handleChat(
         const emit = (obj: unknown): void => {
           controller.enqueue(sseLine(obj, encoder));
         };
-        // #172: done に確定額 charged を載せる。予約額が起点で、実費確定で実費へ。
-        // error/truncated 終端では呼ばれない。口が無ければ余計なし。
+        // #172: put the fixed amount charged on done. Reserved amount is the base, converging to actuals once fixed.
+        // Never called on error/truncated ends. No extra when the hook is missing.
         const chargedDone = (messageId: string, cost: number | null, rawCost: number | null): Record<string, unknown> => {
           const base: Record<string, unknown> = cost === null ? { type: "done", messageId } : { type: "done", messageId, cost: rawCost };
           try {
             const charged = chatModels.chargedFor?.(cost) ?? null;
             if (charged !== null) base["charged"] = charged;
           } catch {
-            // 表示口の失敗でストリーム自体を壊さない
+            // Never break the stream on a display-hook failure
           }
           return base;
         };
-        // #172: error 終端に実費確定のときだけ charged を載せる。本文0・未確定は載せない。
+        // #172: put charged on error ends only with fixed actuals. Zero body or unfixed carries none.
         const chargedError = (code: string, extra: Record<string, unknown>): Record<string, unknown> => {
           const base: Record<string, unknown> = { type: "error", code, ...extra };
           if (contentChars <= 0 || upstreamCost === null) return base;
@@ -522,16 +524,16 @@ export async function handleChat(
             const charged = chatModels.chargedFor?.(upstreamCost) ?? null;
             if (charged !== null) base["charged"] = charged;
           } catch {
-            // 表示口の失敗でストリーム自体を壊さない
+            // Never break the stream on a display-hook failure
           }
           return base;
         };
-        // #174: 終端確定の精算口。本文0の終端も送る（index 側で全額返金にする）。
+        // #174: settle hook on fixed end. Also sends zero-body ends (index side fully refunds).
         const settled = (cost: number | null): void => {
           try {
             onSettled?.({ cost, contentChars });
           } catch {
-            // 精算口の失敗でストリーム自体を壊さない
+            // Never break the stream on a settle-hook failure
           }
         };
         if (switched)
@@ -561,41 +563,41 @@ export async function handleChat(
           }
           buffer += decoder.decode();
           if (buffer.trim() !== "") emitLine(buffer);
-          // #94: length は max_tokens で切れた印。空で完了させず error にする。
+          // #94: length marks max_tokens truncation. Never finish empty as success; return error.
           if (finishReason === "length") {
             console.error(
               `upstream truncated model=${upstreamModel} max_tokens=${CHAT_MAX_TOKENS} reason=${finishReason}`,
             );
-            // #172: 本文あり + 実費確定のときだけ通知文用に載せる。未確定は予約確定だが表示なし。
+            // #172: notice text carries it only with body + fixed actuals. Unfixed stays reserved but hidden.
             emit(chargedError(TRUNCATED_CODE, { maxTokens: CHAT_MAX_TOKENS }));
-            // #174: 本文0の切り詰めは予約全額返金の印だけ送る。
+            // #174: truncated with zero body sends only the full-reservation-refund mark.
             if (contentChars === 0) settled(null);
           } else if (contentChars === 0) {
-            // #94: length じゃないのに本文0文字。カード側は空枠だけが残って
-            // 「どこも異常じゃない」状態になるので、正常終了に見せない。
+            // #94: zero body without length. The card would keep only an empty slot and
+            // look like "nothing is wrong", so never show it as success.
             console.error(
               `upstream empty answer model=${upstreamModel} finish=${finishReason ?? "none"} events=${prefixEvents.length}`,
             );
             emit({ type: "error", code: EMPTY_ANSWER_CODE, finishReason });
-            // #174: 本文0の空回答は予約全額返金の印だけ送る。
+            // #174: empty answer with zero body sends only the full-reservation-refund mark.
             settled(null);
           } else if (upstreamCost === null) {
-            // #172: 実費未確定は予約を確定扱いにし、通知文用に載せる。
+            // #172: unfixed actuals fix the reservation as-is and carry it for notice text.
             emit(chargedDone(messageId, null, upstreamCost));
             settled(null);
           } else {
-            // #169: 完了した attempt の生costだけ運ぶ（換算・表示は別タスク）。tokens は運ばない。
+            // #169: carry only the raw cost of the finished attempt (conversion/display is separate). Never tokens.
             emit(chargedDone(messageId, upstreamCost, upstreamCost));
             settled(upstreamCost);
           }
           controller.close();
         } catch {
-          // #174: 途中の切断。本文0なら予約全額返金の印だけ送る。
+          // #174: mid-stream cut. Zero body sends only the full-reservation-refund mark.
           if (contentChars === 0) settled(null);
           try {
             emit({ type: "error", code: "stream_error", message: "Stream interrupted" });
           } catch {
-            // enqueue不可時は閉じるのみ
+            // Only close when enqueue is impossible
           }
           controller.close();
         } finally {

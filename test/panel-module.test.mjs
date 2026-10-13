@@ -26,8 +26,8 @@ import { panelSource, panelScript } from "./lib/panel-script.mjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(__dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(REPO, rel), "utf8");
-// OSS tree には host 側の module と fixture が無い。あるときだけ読む。
-// host 側では従来どおり両方ある。
+// No module or fixture in the OSS tree; read them only when present.
+// The host tree always has both.
 const HAS_MODULE = fs.existsSync(path.join(REPO, "src/commercial/panel-module.js"));
 const HAS_FIXTURE = fs.existsSync(path.join(REPO, "test/fixtures/panel-before-oss.html"));
 
@@ -89,8 +89,8 @@ function billingTokens(html) {
 
 describe("OS5a the billing panel is a build mode of the same source", () => {
   it("the module lives beside the OSS tree and is the only billing source", () => {
-    // OSS tree には module が無い。base が単体で立つことを見て終わる。
-    // host 側では従来どおり module がある。
+    // No module in the OSS tree; base standing alone is the whole check.
+    // The host tree always has the module.
     if (!HAS_MODULE) {
       assert.ok(BASE.length > 0, "base が空になった");
       return;
@@ -171,8 +171,8 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
       assert.ok(!BASE.includes(`id="${id}"`), `base にログイン要素が残った: ${id}`);
       assert.ok(!BASE.includes(`#${id}`), `base にログイン CSS が残った: ${id}`);
     }
-    // addon-link の1行だけは base の汎用 CSS として残す（font-size のみ）。
-    // 要素（id="…"）は module 側にしか無いことを別に見る。
+    // Only addon-link stays as generic base CSS (font-size only).
+    // Its element (id="…") must live on the module side alone; checked below.
     assert.ok(!BASE.includes(`id="umeboshi-ask-addon-link"`), "base にログイン要素が残った: umeboshi-ask-addon-link");
     for (const key of [
       "loginBtn", "logoutBtn", "redeemBtn", "redeemPh", "redeemAria",
@@ -193,9 +193,9 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
         `base にログイン i18n が残った: ${key}`,
       );
     }
-    // base はログイン導線の id・CSS・i18n 定義・login/redeem 関数定義が 0 であること。
-    // 読むだけの typeof ガード（UmeboshiAskAuthGetToken・wireLoginBoot・
-    // threadNeedLoginText 系）は残す。定義の有無だけを見る。
+    // Base must define zero login plumbing: no ids, CSS, i18n entries, or login/redeem functions.
+    // Read-only typeof guards (UmeboshiAskAuthGetToken, wireLoginBoot,
+    // threadNeedLoginText family) stay; this checks definitions only.
     const code = BASE.replace(/\/\*[\s\S]*?\*\//g, "").replace(/<!--[\s\S]*?-->/g, "");
     for (const fn of [
       "loginSilentRefresh", "loginSetLoggedIn",
@@ -212,10 +212,10 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
         `base がログイン関数を定義した: ${fn}`,
       );
     }
-    // accessToken の実体は module の閉包だけ。base に var が残らないこと。
+    // The accessToken value lives in the module closure only; no var in base.
     assert.ok(!/(?:var|let|const)\s+accessToken\b/.test(code), "base に accessToken の実体が残った");
     assert.ok(!/(?:var|let|const)\s+loginAccessToken\b/.test(code), "base に loginAccessToken が漏れた");
-    // 橋渡しのガードは残す（OS2c の自己ホスト保存が壊れないこと）。
+    // Keep the bridge guards (self-host saving from OS2c must keep working).
     assert.ok(/typeof UmeboshiAskAuthGetToken === "function"/.test(code), "base が token 読口のガードを落とした");
     assert.ok(/typeof wireLoginBoot === "function"/.test(code), "base が login 起動のガードを落とした");
   });
@@ -231,12 +231,12 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
       "markup:tabs", "script"], "シームの構成が変わった");
     for (const n of names) {
       assert.ok(BASE.includes(`umeboshi-ask:module:${n} begin`), `base がシームを落とした: ${n}`);
-      // OSS tree には module が無い。base の空シームだけ見て終わる。
-      // host 側では従来どおり注入版にマーカーが残らない。
+      // No module in the OSS tree; checking the empty base seam is enough.
+      // The host tree always leaves no marker in the injected copy.
       if (HAS_MODULE) assert.ok(!INJECTED.includes(`umeboshi-ask:module:${n}`), `注入版にマーカーが残った: ${n}`);
     }
-    // OSS tree には module が無いので、module を要する throw 検査は host 側だけ。
-    // host 側では従来どおり両方投げる。
+    // No module in the OSS tree, so the throw checks needing it run host-side only.
+    // Host-side both throws still apply.
     if (!HAS_MODULE) return;
     // A begin without its end is a build that cannot be trusted to fill.
     assert.throws(() => injectModule("/* umeboshi-ask:module:css:a begin */", loadModule(REPO)));
@@ -244,8 +244,8 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
   });
 
   it("注入版の課金部分は抽出前の成果物と一致する", () => {
-    // OSS tree には module と fixture が無いので skip。
-    // host 側では従来どおり注入版と fixture が一致する。
+    // No module or fixture in the OSS tree, so skip.
+    // Host-side the injected copy still matches the fixture.
     if (!HAS_MODULE || !HAS_FIXTURE) return;
     const inj = billingTokens(INJECTED);
     const fix = billingTokens(FIXTURE);
@@ -254,8 +254,8 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
 
 
   it("the billing seams land on the same elements the fixture pins", () => {
-    // OSS tree には module と fixture が無いので skip。
-    // host 側では従来どおり両方を見る。
+    // No module or fixture in the OSS tree, so skip.
+    // Host-side both are still checked.
     if (!HAS_MODULE || !HAS_FIXTURE) return;
     for (const frag of [
       'data-tab="credit"',
@@ -277,8 +277,8 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
   });
 
   it("the billing i18n keys are identical to the fixture's", () => {
-    // OSS tree には module と fixture が無いので skip。
-    // host 側では従来どおり両方を見る。
+    // No module or fixture in the OSS tree, so skip.
+    // Host-side both are still checked.
     if (!HAS_MODULE || !HAS_FIXTURE) return;
      // The injected panel carries each key twice: once spliced into LOCALES and
     // once inside addLocaleExtra, which the script seam calls. Both come from
@@ -302,8 +302,8 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
 
   it("base and injected share one script body minus the payload", () => {
     const base = panelScript().replace(/^\s*/gm, "");
-    // OSS tree には module が無い。base 側の不変だけ見て終わる。
-    // host 側では従来どおり両方を見る。
+    // No module in the OSS tree; only the base-side invariants are checked.
+    // Host-side both are still checked.
     // base keeps only the `typeof fetchUsage === "function"` guard that calls it.
     assert.ok(!/function fetchUsage\(/.test(base), "base に fetchUsage の実体が残った");
     assert.ok(base.includes("addLocaleExtra"), "base が i18n の差し込み口を落とした");
@@ -316,8 +316,8 @@ describe("OS5a the billing panel is a build mode of the same source", () => {
   });
 
   it("the vm harness can drive the injected panel", () => {
-    // OSS tree には module が無いので skip。
-    // host 側では従来どおり注入 script を見る。
+    // No module in the OSS tree, so skip.
+    // Host-side the injected script is still checked.
     if (!HAS_MODULE) return;
     const src = panelScript({ module: true });
     for (const fn of ["fetchUsage", "showCreditNotice", "handlePaymentRequired", "openBillingPage"]) {

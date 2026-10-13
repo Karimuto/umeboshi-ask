@@ -1,19 +1,19 @@
-// #259 OS3a: 課金のない Worker コア入口 (src/core.ts)。
-// 契約:
-//   (1) OPENROUTER_API_KEY だけで chat・models が動く（ASK_TOKEN は任意）
-//   (2) 課金 route・Google 認証 route は存在しない（404）
-//   (3) KV を束縛しない自己ホストでは chat・models は動き、threads・settings は
-//       500（面板はローカル設定にフォールバックする）
-//   (4) アクセストークン一致の Bearer だけ threads・settings を保存できる
-//       （userId は token の SHA-256 ハッシュ。生値は KV に現れない）
-//   (5) chat は課金の話をしない（done に charged を載せない）
-//   (6) ログイン認証（外部IdP・署名付きトークン・20文字コード）の route が
-//       1 つも無い。挙動は完全版 (src/index.ts) に置いたまま（#262 OS4a）
-// #264 OS4b: hosted 運用の機構をコアから外す（完全版の挙動は変えない）。
-//   (7) cors の許可ヘッダーに課金 webhook の署名ヘッダー (Stripe-Signature) が無い
-//   (8) モデル一覧は bundle のみ。credits（予約額）字段も落とす
-//   (9) chat は rate limit も予約・精算も呼ばない（KV を束縛しても書かない）
-//   salt 既定（ANON_SALT のみ）は完全版の test/full/settle.test.ts が pin する。
+// #259 OS3a: billing-free Worker core entry (src/core.ts).
+// Contract:
+//   (1) chat/models run on OPENROUTER_API_KEY alone (ASK_TOKEN optional)
+//   (2) no billing routes or Google auth routes (404)
+//   (3) self-hosted without KV bindings: chat/models work, threads/settings return
+//       500 (panel falls back to local settings)
+//   (4) only a matching-Bearer access token can save threads/settings
+//       (userId is the token's SHA-256 hash. Raw value never appears in KV)
+//   (5) chat never mentions billing (no charged on done)
+//   (6) not a single login-auth (external IdP, signed token, 20-char code) route
+//       exists. Behavior stays in the full build (src/index.ts) (#262 OS4a)
+// #264 OS4b: strip hosted-ops machinery from core (full build behavior unchanged).
+//   (7) CORS allowed headers lack the billing-webhook signature header (Stripe-Signature)
+//   (8) model list is bundle-only. Drop the credits (reserved amount) field too
+//   (9) chat calls neither rate limit nor reserve/settle (writes nothing even with KV bound)
+//   The salt default (ANON_SALT only) is pinned by the full build's test/full/settle.test.ts.
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { handleCoreRequest, type CoreDeps, type CoreEnv } from "../../src/core";
 import { memoryStore, type AuthStore } from "../../src/stores";
@@ -54,13 +54,13 @@ function openRouterChunk(delta: Record<string, unknown>): string {
   return `data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`;
 }
 
-/** 上流の stub。返したストリームをそのまま core が流す。 */
+/** Upstream stub. Core passes the returned stream through as-is. */
 function upstreamStub(): typeof fetch {
   return async () =>
     sseResponse([openRouterChunk({ content: "こたえ" }), "data: [DONE]\n\n"]);
 }
 
-/** 上流の stub。usage.cost 付き（精算が差額を確定できる形）。 */
+/** Upstream stub with usage.cost (a shape settle could finalize a delta from). */
 function usageUpstream(cost: number): Response {
   return new Response(
     `${openRouterChunk({ content: "こたえ" })}` +
@@ -114,7 +114,7 @@ describe("#259 コア入口は OPENROUTER_API_KEY だけで立つ", () => {
     expect(chat.status).toBe(200);
     const sse = await chat.text();
     expect(sse).toContain("こたえ");
-    // 課金の話は出ない（done に charged を載せない）。
+    // No billing talk (no charged on done).
     const done = parseSseEvents(sse).find((e) => e.type === "done");
     expect(done).toBeDefined();
     expect(done).not.toHaveProperty("charged");
@@ -185,7 +185,7 @@ describe("#259 KV を束縛しない自己ホストの劣化", () => {
     );
     expect(models.status).toBe(200);
 
-    // 保存系は KV が無いので 500。面板はこの失敗を見てローカル設定にフォールバックする。
+    // Savers 500 without KV. The panel sees this failure and falls back to local settings.
     const post = await handleCoreRequest(
       bearerReq(
         "/api/ask/threads/c1/messages",
@@ -212,7 +212,7 @@ describe("#259 KV を束縛しない自己ホストの劣化", () => {
     );
     expect(settingsPut.status).toBe(500);
 
-    // 面板照会は KV が無いと unavailable（面板は同梱版のまま動く）。
+    // Panel lookup without KV is unavailable (panel keeps running the bundled build).
     const panel = await handleCoreRequest(
       new Request("https://ask.example/api/ask/panel"),
       env,
@@ -361,7 +361,7 @@ describe("#259 アクセストークンで threads・settings を保存できる
     const chat = await handleCoreRequest(chatReq({ model: MODEL_ID, question: "Q" }, "wrong-token"), env, deps);
     expect(chat.status).toBe(401);
 
-    // 匿名（Bearer なし）の chat は止めない。
+    // Anonymous (no Bearer) chat is not blocked.
     const anon = await handleCoreRequest(chatReq({ model: MODEL_ID, question: "Q" }), env, deps);
     expect(anon.status).toBe(200);
   });
@@ -398,9 +398,9 @@ describe("#259 面板照会", () => {
   });
 });
 
-// #262 OS4a: ログイン認証（Google OAuth・JWT・20文字コード）は完全版
-// (src/index.ts) 専用になった。コア側の実体が消えたことを挙動とソースの
-// 両方で pin する（恒久ガードは OS6b の仕事。ここは OS4a の自己完結）。
+// #262 OS4a: login auth (Google OAuth, JWT, 20-char codes) is now full-build
+// (src/index.ts) only. Pin the removal from core in both behavior and source
+// (the permanent guard is OS6b's job; this is OS4a's self-contained pin).
 describe("#262 コア入口に Google 認証 route が 1 つも無い", () => {
   it("login・callback・redeem・refresh・me は GET/POST とも 404", async () => {
     const env: CoreEnv = { ASK_TOKEN, OPENROUTER_API_KEY: "test-key" };
@@ -428,8 +428,8 @@ describe("#262 コア入口に Google 認証 route が 1 つも無い", () => {
   });
 
   it("JWT 形の Bearer は検証されない（匿名として通る）", async () => {
-    // 検証する実装がコアに無いので、Bearer は ASK_TOKEN との照合だけ。
-    // 署名の効かない JWT 形を送っても unauthorized にならず匿名のまま。
+    // Core has no verifying implementation, so Bearer is only compared against ASK_TOKEN.
+    // A JWT-shaped token with a dud signature stays anonymous instead of unauthorized.
     const env: CoreEnv = { OPENROUTER_API_KEY: "test-key" };
     const deps: CoreDeps = { fetchFn: upstreamStub() };
     const fakeJwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.not-a-signature";
@@ -449,8 +449,8 @@ describe("#262 コア入口に Google 認証 route が 1 つも無い", () => {
   });
 });
 
-// #264 OS4b: hosted 運用の機構をコアから外す。課金 route 不在・credits 不在を
-// コアの契約として pin する（完全版 src/index.ts の挙動は変えない）。
+// #264 OS4b: strip hosted-ops machinery from core. Pin missing billing routes/credits
+// as core contract (full build src/index.ts behavior unchanged).
 describe("#264 OS4b: hosted 機構はコアに無い", () => {
 
   afterEach(() => {
@@ -469,14 +469,14 @@ describe("#264 OS4b: hosted 機構はコアに無い", () => {
     );
     expect(preflight.status).toBe(204);
 
-    // 通常の応答（models）にも同じ許可ヘッダーが付く。
+    // Normal responses (models) carry the same allowed headers.
     const models = await handleCoreRequest(new Request("https://ask.example/api/ask/models"), env);
     expect(models.status).toBe(200);
 
     for (const res of [preflight, models]) {
       const allow = res.headers.get("Access-Control-Allow-Headers") ?? "";
       expect(allow).not.toContain("Stripe-Signature");
-      // 面板・カードが使うヘッダーはそのまま通す。
+      // Headers the panel/cards use still pass through.
       for (const header of ["Content-Type", "Authorization", "x-card-id", "X-Anon-Id"]) {
         expect(allow).toContain(header);
       }
@@ -507,17 +507,16 @@ describe("#264 OS4b: hosted 機構はコアに無い", () => {
     expect(body.source).toBe("bundle");
     expect(body.models).toHaveLength(BUNDLE_MODELS.length);
     for (const model of body.models) {
-      // 予約額 (credits) は課金の額面。コアは credits の概念を持たない。
+      // credits (reserved amount) is billing face value. Core has no credits concept.
       expect(model).not.toHaveProperty("credits");
-      // 面板が ModelTier の照合に使う欄は残す。
+      // Columns the panel uses for ModelTier matching stay.
       expect(typeof model["id"]).toBe("string");
       expect(typeof model["priceUsdPer1M"]).toBe("number");
     }
   });
 
   it("chat は rate limit も予約・精算も書かない（KV を束縛しても）", async () => {
-    // 完全版なら匿名週予算（初週30c・1c/問）で 31 問目が 429 になる本数を通す。
-    // コアはどの route にも rate limit を掛けない（Cloudflare 側の制限に委ねる）。
+    // Core applies no rate limit on any route (defers to Cloudflare-side limits).
     const store = memoryStore();
     const puts: { key: string; value: string }[] = [];
     const recording: AuthStore = {
@@ -537,7 +536,7 @@ describe("#264 OS4b: hosted 機構はコアに無い", () => {
       const done = parseSseEvents(await res.text()).find((e) => e.type === "done");
       expect(done).not.toHaveProperty("charged");
     }
-    // 課金 (credits)・回数制限 (ask:rl:) のキーは1つも書かれない。
+    // Neither billing (credits) nor rate-limit (ask:rl:) keys are written at all.
     expect(puts.filter((p) => p.key.includes("credits"))).toEqual([]);
     expect(puts.filter((p) => p.key.startsWith("ask:rl:"))).toEqual([]);
   });

@@ -1,29 +1,30 @@
-// #259 OS3a: 保存系ストアの KV 束縛を、完全版入口 (index.ts) と課金なしの
-// コア入口 (core.ts) で共有する。KV なしでの劣化契約は**ここ1箇所**が正:
+// #259 OS3a: share the KV binding for storage stores between the hosted entry
+// (index.ts) and the billing-free core entry (core.ts). Degraded-without-KV
+// contract lives **only here**:
 //
-//   1. deps.store の注入（テスト）があればそれ
-//   2. 無くて UMEBOSHI_KV が束縛されていれば KV
-//   3. どちらも無ければ undefined = 呼び出し側が 500「〜not configured」を返す
+//   1. injected deps.store (tests) wins when present
+//   2. else KV when UMEBOSHI_KV is bound
+//   3. else undefined = caller returns 500 "~not configured"
 //
-// 自己ホストで KV を束縛しない利用者は chat・models だけが動き、
-// threads・settings・面板照会は 500 になって面板がローカル設定にフォールバック
-// する（OS3a で定義した劣化契約）。allowlist・在庫キャッシュ・purge は
-// 完全版だけの関心事なので modelStoreFor は index.ts に残している。
+// Self-host users without KV get chat/models only; threads/settings/panel
+// lookup return 500 and the panel falls back to local settings (degraded
+// contract defined in OS3a). allowlist/inventory cache/purge stay hosted-only,
+// so modelStoreFor remains in index.ts.
 //
-// #262 OS4a: 認証コードの保存断面 (AuthStore) とその実装 (kvStore・
-// memoryStore) を auth.ts（完全版専用）からここへ移した。コア入口が
-// auth.ts を import しないと、ログイン認証の実装へ物理的に到達できない。
+// #262 OS4a: moved the auth-code storage surface (AuthStore) and its impls
+// (kvStore/memoryStore) here from the hosted-only auth.ts. Core never imports
+// auth.ts, so it cannot physically reach the login-auth implementation.
 import type { ThreadStore } from "./threads";
 
-/** settings・課金台帳・認証コードを保存する断面。 */
+/** Surface storing settings, the hosted ledger, and auth codes. */
 export interface AuthStore {
   get(key: string): Promise<string | null>;
-  /** ttlSec を省略した書き込みは期限なし（単発で買った credits 用）。 */
+  /** Writes without ttlSec never expire (for one-off hosted ledger entries). */
   put(key: string, value: string, ttlSec?: number): Promise<void>;
   del(key: string): Promise<void>;
 }
 
-/** KV 束縛の AuthStore 実装。 */
+/** KV-bound AuthStore implementation. */
 export function kvStore(kv: KVNamespace): AuthStore {
   return {
     get: (k) => kv.get(k),
@@ -32,7 +33,7 @@ export function kvStore(kv: KVNamespace): AuthStore {
   };
 }
 
-// テスト・KV未束縛dev用。TTLはget時に強制する（KV expirationTtl相当）。
+// Test/KV-less dev store. Enforce TTL on get (like KV expirationTtl).
 export function memoryStore(): AuthStore {
   const map = new Map<string, { value: string; exp: number }>();
   return {
@@ -55,19 +56,19 @@ export function memoryStore(): AuthStore {
   };
 }
 
-/** ストアの注入口。完全版の Deps・コアの CoreDeps が満たす同名断面。 */
+/** Store injection point. Hosted Deps and core CoreDeps satisfy this same shape. */
 export interface StoreDeps {
   store?: AuthStore;
 }
 
-/** KV の束縛口。完全版の Env・コアの CoreEnv が満たす同名断面。 */
+/** KV binding surface. Hosted Env and core CoreEnv satisfy this same shape. */
 export interface StoreEnv {
   UMEBOSHI_KV?: KVNamespace;
 }
 
 /**
- * settings・課金台帳・認証コードのストア。未束縛は undefined
- * （呼び出し側が 500 auth store not configured / billing_unavailable を返す）。
+ * Store for settings, the hosted ledger, and auth codes. Unbound is undefined
+ * (caller returns 500 auth store not configured / billing_unavailable).
  */
 export function authStoreFor(deps: StoreDeps, env: StoreEnv): AuthStore | undefined {
   if (deps.store) return deps.store;
@@ -76,8 +77,8 @@ export function authStoreFor(deps: StoreDeps, env: StoreEnv): AuthStore | undefi
 }
 
 /**
- * S6: Thread本体・indexは永続KV。deps.store注入時はTTL付きAuthStoreを永続扱いで
- * 包む (テスト用memoryStoreのTTL満了を避けるため10年TTL)。
+ * S6: Thread body/index live in durable KV. An injected deps.store wraps a
+ * TTL AuthStore as durable (10-year TTL avoids test memoryStore expiry).
  */
 export function threadStoreFor(deps: StoreDeps, env: StoreEnv): ThreadStore | undefined {
   if (deps.store) {

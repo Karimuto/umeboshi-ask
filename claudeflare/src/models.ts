@@ -1,15 +1,16 @@
-// S8: モデル選択の正本はHOSTのKV Allowlist、OpenRouter在庫はcron dailyキャッシュ。
-// OSS境界 (ADR 0002): ここに置く価格は公開USD単価の目安のみ。credits算出式・
-// マージン・残高判定はHOST金庫 (S10)。selectable/creditsはHOST overlayが付与し、
-// 欠損時は選択可として扱う。自力デプロイはbundle固定5モデルで動作する。
-/** #66 Effort（OpenRouter reasoning.effort）の選択値。取り揃えはモデルごとに違う。 */
+// S8: model selection source is the HOST KV allowlist; OpenRouter inventory is a cron daily cache.
+// OSS boundary (ADR 0002): prices here are public USD guide prices only. Credit
+// formulas, margins, and balance checks live in the HOST vault (S10).
+// selectable/credits come from the HOST overlay; missing means selectable.
+// Self-host runs on the fixed 5-model bundle.
+/** #66 Effort (OpenRouter reasoning.effort) choices. Lineup differs per model. */
 export const EFFORT_VALUES = ["max", "xhigh", "high", "medium", "low", "minimal", "none"] as const;
 export type EffortValue = (typeof EFFORT_VALUES)[number];
 const EFFORT_KNOWN: Record<string, true> = { max: true, xhigh: true, high: true, medium: true, low: true, minimal: true, none: true };
 export function isEffortValue(v: unknown): v is EffortValue {
   return typeof v === "string" && EFFORT_KNOWN[v] === true;
 }
-/** OpenRouter reasoning.supported_efforts を正規化する。未知値は捨て、空ならnull（選択なし扱い）。順序は受信順を保つ。 */
+/** Normalize OpenRouter reasoning.supported_efforts. Drop unknowns; empty is null (no-choice). Keeps receive order. */
 export function parseSupportedEfforts(raw: unknown): EffortValue[] | null {
   if (!Array.isArray(raw)) return null;
   const out: EffortValue[] = [];
@@ -21,30 +22,30 @@ export function parseSupportedEfforts(raw: unknown): EffortValue[] | null {
 export interface AskModel {
   id: string;
   name: string;
-  /** 公開単価の目安 ($/1M tokens, prompt)。安い順ソート用。不明はInfinity。 */
+  /** Public guide price ($/1M tokens, prompt). For cheapest-first sort. Unknown is Infinity. */
   priceUsdPer1M: number;
-  /** 予約額 (credits/問)。BUNDLE は 2026-10-06 の OpenRouter 実測を正とする。在庫由来の未知idは欠損で見積りに落ちる。 */
+  /** Reserved amount (credits/question). BUNDLE follows the 2026-10-06 OpenRouter measurement. Unknown inventory ids stay missing and fall to estimate. */
   credits?: number;
-  /** AA-Omniscience Index (-100〜100の目安、整数丸め)。0は未取得扱いで非表示。根拠リンクは持たない (#72 Q6・Q9)。 */
+  /** AA-Omniscience Index (guide, -100 to 100, rounded int). 0 means unmeasured and hidden. No source links (#72 Q6/Q9). */
   smartScore: number;
-  /** #198 頭よさそうスコアの Effort 別値（AA-Omniscience Index の整数丸め）。
-   *  選べる Effort のうち計測できた分だけ載せる。欠損の Effort は出さない（パネルは `—` を出す）。 */
+  /** #198 Per-effort smart-score values (AA-Omniscience Index, rounded int).
+   *  Only measured efforts are listed. Missing efforts are omitted (panel shows `—`). */
   scores?: Partial<Record<EffortValue, number>>;
-  /** #66 選べる取り揃え。空・欠損は選択なし（effort UIを出さず何も送らない）。 */
+  /** #66 Available lineup. Empty/missing means no choice (no effort UI, sends nothing). */
   supportedEfforts: readonly EffortValue[];
-  /** #66 未指定時に送る既定。欠損時は後述の代替（medium→先頭）。 */
+  /** #66 Default when unspecified. Falls back as described below (medium, then first). */
   defaultEffort: EffortValue | null;
-  /** #66 trueならnoneを選ばせない（OpenRouter mandatory）。 */
+  /** #66 True blocks none (OpenRouter mandatory). */
   reasoningMandatory: boolean;
 }
 
 export interface ResolvedModel extends AskModel {
-  /** 残高不足でfalse (HOST/S10が付与)。欠損・true=選択可。 */
+  /** False on low balance (attached by HOST/S10). Missing/true = selectable. */
   selectable: boolean;
-  /** 予約額 (credits/問)。BUNDLE は実測値を持ち、欠損時は見積りに落ちる。 */
+  /** Reserved amount (credits/question). BUNDLE carries measured values; missing falls to estimate. */
   credits?: number;
 }
-/** #66 未指定時に送る値。defaultEffortが有効ならそれ、無ければmedium、無ければ先頭。選択なしモデルはnull。 */
+/** #66 Value sent when unspecified. Default effort when valid, else medium, else first. No-choice models are null. */
 export function defaultEffortFor(model: Pick<AskModel, "supportedEfforts" | "defaultEffort">): EffortValue | null {
   const supported = model.supportedEfforts ?? [];
   if (supported.length === 0) return null;
@@ -52,7 +53,7 @@ export function defaultEffortFor(model: Pick<AskModel, "supportedEfforts" | "def
   if ((supported as readonly string[]).includes("medium")) return "medium";
   return supported[0] ?? null;
 }
-/** #66 指定値がそのモデルで有効か。mandatoryモデルはnone不可。選択なしモデルは全て不可。 */
+/** #66 Whether the value is valid for the model. Mandatory models reject none. No-choice models reject all. */
 export function isValidEffortForModel(
   model: Pick<AskModel, "supportedEfforts" | "reasoningMandatory">,
   effort: unknown,
@@ -64,27 +65,22 @@ export function isValidEffortForModel(
   return true;
  }
 
-/** 自力デプロイ用bundle固定5モデル（ADR 0015）。
- * 定義順＝安い順。OpenRouter単線で動く。
- * 単価は公開USD単価の目安（prompt $/1M。2026-09-23実測）。
- * 予約額 (credits/問) は2026-10-06のOpenRouter実測 cost を `ceil(cost×1200)` した値
- * （MiMo-V2.5 $0.000231→1 / GLM $0.000144→1 / MiMo-Pro $0.000653→1 /
- * Gemini $0.00452→6 / Opus $0.0254→31。入力 617〜1018 tokens）。
- * 旧式の 4000 トークン仮定は入力を 4〜6 倍に盛っていたため置き換えた。
- * 無料枠（週20・初週30）の額面は変えない。Opus (31) は無料枠で送れない。
- * smartScoreはAA-Omniscience Indexの整数丸め（2026-09-28実測。各モデルthinking level最大行）。
- * Opus 46 (max 46.42/xhigh 42.65/high 40.63/medium 40.32/low 38.87)、
- * mimo-v2.6-pro 8 (8.38)、glm-5.3-flash 7 (7.47。無印GLM-5.3 max 14.3は別物のため不採用)、
- * gemini-3.8-flash 30 (high 29.55/medium 28.58/low 21.35。max行なし)、
- * mimo-v2.5 -10 (-9.83。mimo-v2-5-pro 3.25は別物のため不採用)。
- * #198 scores は同実測の Effort 別値（整数丸め）。欠測の Effort は載せずパネルが `—` を出す。
- * Opus max 46 / xhigh 43 / high 41 / medium 40 / low 39、
- * gemini-3.8-flash high 30 / medium 29 / low 21（max 行なし）、
- * glm-5.3-flash は max 7 だけ（同モデルの high/low は実測が無いため載せない）、
- * mimo-v2.6-pro は Effort 自体を選べないので scores を持たない。
- * 実使用量の精算は#166に委ねる。本bundleの credits が予約額の正である。
- * 書き換えは再デプロイ不要: KV ask:models:allowlist:v1 にid配列JSONをputすれば即時反映される
- * （npx wrangler kv:key put --binding=UMEBOSHI_KV "ask:models:allowlist:v1" '["xiaomi/mimo-v2.5",...]'）。 */
+/** Fixed 5-model bundle for self-host (ADR 0015).
+ * Definition order = cheapest first. Runs on the single OpenRouter line.
+ * Prices are public USD guide prices (prompt $/1M. Measured 2026-09-23).
+ * smartScore is the AA-Omniscience Index rounded to int (measured 2026-09-28. Per-model max thinking-level row).
+ * Opus 46 (max 46.42/xhigh 42.65/high 40.63/medium 40.32/low 38.87),
+ * mimo-v2.6-pro 8 (8.38), glm-5.3-flash 7 (7.47. Plain GLM-5.3 max 14.3 is a different model, so excluded),
+ * gemini-3.8-flash 30 (high 29.55/medium 28.58/low 21.35. No max row),
+ * mimo-v2.5 -10 (-9.83. mimo-v2-5-pro 3.25 is a different model, so excluded).
+ * #198 scores are the per-effort values from the same measurement (rounded int). Unmeasured efforts are omitted and the panel shows `—`.
+ * Opus max 46 / xhigh 43 / high 41 / medium 40 / low 39,
+ * gemini-3.8-flash high 30 / medium 29 / low 21 (no max row),
+ * glm-5.3-flash has max 7 only (no high/low measurement for that model, so omitted),
+ * mimo-v2.6-pro offers no effort choice, so it has no scores.
+ * Real-usage settle belongs to #166. This bundle's credits are the reserved-amount source of truth.
+ * Rewrite needs no redeploy: put an id-array JSON to KV ask:models:allowlist:v1 for instant effect
+ * (npx wrangler kv:key put --binding=UMEBOSHI_KV "ask:models:allowlist:v1" '["xiaomi/mimo-v2.5",...]'). */
 export const BUNDLE_MODELS: readonly AskModel[] = [
   { id: "xiaomi/mimo-v2.5", name: "Xiaomi: MiMo-V2.5", priceUsdPer1M: 0.14, credits: 1, smartScore: -10, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false },
   { id: "z-ai/glm-5.3-flash", name: "Z.ai: GLM 5.3 Flash", priceUsdPer1M: 0.15, credits: 1, smartScore: 7, scores: { max: 7 }, supportedEfforts: ["max", "high", "low"], defaultEffort: "max", reasoningMandatory: true },
@@ -93,8 +89,8 @@ export const BUNDLE_MODELS: readonly AskModel[] = [
   { id: "anthropic/claude-opus-5.5", name: "Anthropic: Claude Opus 5.5", priceUsdPer1M: 4.0, credits: 31, smartScore: 46, scores: { max: 46, xhigh: 43, high: 41, medium: 40, low: 39 }, supportedEfforts: ["max", "xhigh", "high", "medium", "low"], defaultEffort: "high", reasoningMandatory: true },
 ] as const;
 
-/** #198 4段階（ModelTier）の組。級名は site/ のモデル区分と同じ語（ベーシック/ミドル/プレミアム）＋最上段のウルトラ。
- *  各段は (modelId, effort) の1組。effort は選択なしモデルでは null。 */
+/** #198 Four tiers (ModelTier). Tier names match the site/ model classes (basic/middle/premium) plus top ultra.
+ *  Each tier is one (modelId, effort) pair. Effort is null for no-choice models. */
 export interface ModelPreset { tier: "basic" | "middle" | "premium" | "ultra"; modelId: string; effort: EffortValue | null; }
 export const MODEL_PRESETS: readonly ModelPreset[] = [
   { tier: "basic",   modelId: "xiaomi/mimo-v2.6-pro",   effort: null },
@@ -124,7 +120,7 @@ export function kvModelStore(kv: KVNamespace): ModelStore {
   };
 }
 
-/** テスト・KV未束縛dev用。TTLは再現しない (purge/readの振る舞いのみ)。 */
+/** Test/KV-less dev store. No TTL replay (purge/read behavior only). */
 export function memoryModelStore(): ModelStore {
   const m = new Map<string, string>();
   return {
@@ -138,7 +134,7 @@ export function memoryModelStore(): ModelStore {
   };
 }
 
-/** 安い順。価格不明は末尾。安定ソートなので同額は入力順を保つ。 */
+/** Cheapest first. Unknown prices go last. Stable sort keeps input order on ties. */
 export function sortCheapFirst<T extends { priceUsdPer1M: number }>(models: readonly T[]): T[] {
   return [...models].sort((a, b) => {
     const pa = Number.isFinite(a.priceUsdPer1M) ? a.priceUsdPer1M : Number.POSITIVE_INFINITY;
@@ -148,8 +144,8 @@ export function sortCheapFirst<T extends { priceUsdPer1M: number }>(models: read
 }
 
 /**
- * 残高不足モデルの選択不可を付与する純粋関数 (S10が残高と繋ぐ)。
- * balance不明 (null) またはcredits不明のモデルは選択可のまま。
+ * Pure function attaching unselectable for low-balance models (S10 joins balance).
+ * Unknown balance (null) or unknown-credits models stay selectable.
  */
 export function markSelectable<T extends { credits?: number }>(
   models: readonly T[],
@@ -161,7 +157,7 @@ export function markSelectable<T extends { credits?: number }>(
   }));
 }
 
-/** 安い順で最初の選択可モデル。無ければnull。 */
+/** First selectable, cheapest first. Null when none. */
 export function cheapestSelectable(models: readonly ResolvedModel[]): ResolvedModel | null {
   for (const m of sortCheapFirst(models)) {
     if (m.selectable !== false) return m;
@@ -170,8 +166,8 @@ export function cheapestSelectable(models: readonly ResolvedModel[]): ResolvedMo
 }
 
 /**
- * S9: 現在モデル以外の安い順で最初の選択可モデル。無ければnull。
- * 15秒完全無音の単発切替先。選択不可 (selectable:false) は飛ばす。
+ * S9: first selectable below the current model, cheapest first. Null when none.
+ * One-shot target after 15s of total silence. Skips unselectable (selectable:false).
  */
 export function nextFallbackModel(
   models: readonly ResolvedModel[],
@@ -187,11 +183,11 @@ export interface CachedInventoryModel {
   id: string;
   name: string;
   priceUsdPer1M: number;
-  /** #66 取り揃え。欠損・空は選択なし扱い。旧cache（無印）は欠損として読む。 */
+  /** #66 Lineup. Missing/empty means no choice. Old cache (unmarked) reads as missing. */
   supportedEfforts?: EffortValue[];
-  /** #66 未指定時に送る既定。無効値は送らず代替に落とす。 */
+  /** #66 Default when unspecified. Invalid values are never sent; fall back instead. */
   defaultEffort?: EffortValue | null;
-  /** #66 trueならnoneを選ばせない。欠損はfalse扱い。 */
+  /** #66 True blocks none. Missing reads as false. */
   reasoningMandatory?: boolean;
 }
 
@@ -200,7 +196,7 @@ export interface ModelCache {
   models: CachedInventoryModel[];
 }
 
-/** #66 OpenRouter reasoning オブジェクトから取り揃え・既定・必須を抜く。壊れは空（選択なし扱い）。 */
+/** #66 Pick lineup/default/required from the OpenRouter reasoning object. Broken is empty (no-choice). */
 export function parseReasoningMeta(raw: unknown): {
   supportedEfforts: EffortValue[];
   defaultEffort: EffortValue | null;
@@ -237,7 +233,7 @@ function entryPrice(entry: InventoryEntry): number {
   return Number.isFinite(price) ? price : Number.POSITIVE_INFINITY;
 }
 
-/** OpenRouter GET /models のdata配列だけ抜く。壊れた要素は捨てる。 */
+/** Pick only the data array of OpenRouter GET /models. Drop broken entries. */
 export function parseInventoryPayload(payload: unknown): CachedInventoryModel[] {
   if (typeof payload !== "object" || payload === null || !("data" in payload)) return [];
   const data = (payload as { data?: unknown }).data;
@@ -255,8 +251,8 @@ export function parseInventoryPayload(payload: unknown): CachedInventoryModel[] 
 }
 
 /**
- * OpenRouter在庫をKVに24h TTLで保存する (cron daily＋purge後の遅延再取得用)。
- * 取得失敗時はnullを返し、既存のstaleキャッシュを温存する。
+ * Save OpenRouter inventory to KV with 24h TTL (for cron-daily + delayed refetch after purge).
+ * On fetch failure return null and keep the existing stale cache.
  */
 export async function refreshModelCache(
   store: ModelStore,
@@ -282,7 +278,7 @@ export async function refreshModelCache(
   return cache;
 }
 
-/** 壊れたキャッシュは無かったことにする (bundleにfallback)。 */
+/** Treat broken cache as absent (fallback to bundle). */
 export async function readModelCache(store: ModelStore): Promise<ModelCache | null> {
   let raw: string | null;
   try {
@@ -307,12 +303,12 @@ export async function readModelCache(store: ModelStore): Promise<ModelCache | nu
   }
 }
 
-/** 手動purge: 在庫キャッシュ削除のみ。Allowlist自体は常時live読みなので次回GETに即時反映される。 */
+/** Manual purge: deletes the inventory cache only. The allowlist always reads live, so the next GET reflects it. */
 export async function purgeModelCache(store: ModelStore): Promise<void> {
   await store.del(MODELS_CACHE_KEY);
 }
 
-/** Allowlistはid配列JSON。空・壊れ・欠損はnull (=bundle扱い)。重複は除く。 */
+/** Allowlist is an id-array JSON. Empty/broken/missing is null (= bundle). Dedupes. */
 export function parseAllowlist(raw: string | null): string[] | null {
   if (!raw) return null;
   try {
@@ -343,10 +339,10 @@ function bundleResolved(): ResolvedModel[] {
 
 
 /**
- * モデル一覧を解決する。KV Allowlistがあれば正とし (安い順に並べ直す)、
- * 無ければbundle固定5モデル (自力デプロイはHOSTなしで動作)。
- * Allowlist未知idも落とさず末尾に含める (1行変更がpurgeで即時反映される)。
- * #66: cacheのreasoningメタはbundle品揃えより新しい在庫を優先し、Allowlist未知idにも載せる。
+ * Resolve the model list. A KV allowlist wins when present (re-sorted cheapest
+ * first); otherwise the fixed 5-model bundle (self-host runs without HOST).
+ * Unknown allowlist ids are kept at the end (one-line edits reflect via purge).
+ * #66: cache reasoning meta prefers newer inventory over the bundle lineup, and also covers unknown allowlist ids.
  */
 export async function resolveModels(store?: ModelStore): Promise<ResolvedModels> {
   if (!store) return { models: bundleResolved(), source: "bundle" };
@@ -378,10 +374,10 @@ export async function resolveModels(store?: ModelStore): Promise<ResolvedModels>
   const models: ResolvedModel[] = allowIds.map((id) => {
     const meta = byId.get(id);
     const cached = cacheById.get(id);
-    // #44: 旧形式の在庫cacheは reasoning メタを「持っていない」。それは「空」ではない。
-    // 空として上書きすると、deploy 済みの bundle の取り揃えを最大24h隠す。
-    // そうすると「Effort の選択肢が出ない = commit がつぶれた」ように見える。
-    // reasoning メタを持つ cache が正。cache 優先という既存動作は変えない。
+    // #44: old-format inventory cache "lacks" reasoning meta. That is not "empty".
+    // Overwriting as empty would hide the deployed bundle lineup for up to 24h.
+    // Then "no effort choices" would look like a broken commit.
+    // Cache with reasoning meta wins. Existing cache-first behavior is unchanged.
     if (meta && cached) {
       const cachedMeta = Array.isArray(cached.supportedEfforts) ? reasoningMetaOf(cached) : null;
       return { ...meta, ...(cachedMeta ?? {}), selectable: true };

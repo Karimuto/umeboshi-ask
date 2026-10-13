@@ -1,17 +1,17 @@
-// #100 穴1「CORS の Origin 無条件反転」の回帰テスト。
+// #100 hole 1: regression test for "CORS unconditional Origin reflection".
 //
-// #260 OS3b: CORS はコア入口 (src/core.ts) の契約（許可リストは共有の
-// src/cors.ts。コアは課金 webhook が無いので許可ヘッダーから Stripe-Signature
-// だけが落ちる）。同じ isOriginAllowed を完全版も使うが、entry ごとの配線
-// （ALLOW_HEADERS_CORE vs ALLOW_HEADERS）は各自のスイートで pin する。
+// #260 OS3b: CORS is core-entry (src/core.ts) contract (allowlist shared from
+// src/cors.ts. Core has no billing webhook, so only Stripe-Signature drops
+// from the allowed headers). Both entries share isOriginAllowed, but each
+// entry's wiring (ALLOW_HEADERS_CORE vs ALLOW_HEADERS) is pinned by its own suite.
 //
-// ここに書くのは「その穴が閉じていないと落ちる」テストだけ。
-// 穴を塞ぐ前の挙動をそのまま固定していたテストは
-// models.test.ts / threads.test.ts 側で新しい期待値に置き換えた。
+// Only tests that fail while the hole is open belong here.
+// Tests that pinned pre-fix behavior as-is were replaced with new
+// expectations on the models.test.ts / threads.test.ts side.
 //
-// 元は security.test.ts の 穴1 だった。分割時に「同一origin」の用例を
-// 完全版の /billing からコアの /api/ask/models に差し替えた（コアに
-// /billing route は無い。判定は isOriginAllowed の共有ロジック）。
+// Split from security.test.ts hole 1. The "same-origin" case was swapped
+// from the full build's /billing to core's /api/ask/models (core has
+// no /billing route. The check is the shared isOriginAllowed logic).
 import { describe, expect, it } from "vitest";
 import { handleCoreRequest, type CoreEnv } from "../../src/core";
 
@@ -19,9 +19,9 @@ const env: CoreEnv = {};
 
 describe("#100 穴1 CORS は許可リスト以外を反射しない", () => {
   it("別オリジンのGETはACAO無し・レスポンス自体は返す", async () => {
-    // 防御は「ブラウザに読ませない」こと。403にすると
-    // 未知のOriginを返すWebViewでログインが壊れうるので、
-    // 応答は返すがACAOだけを落とす。
+    // Defense means "don't let the browser read it". Returning 403 could
+    // break login in WebViews that send an unknown Origin, so return
+    // the response but drop only ACAO.
     const res = await handleCoreRequest(
       new Request("https://ask.example/api/ask/models", {
         headers: { Origin: "https://evil.example" },
@@ -71,7 +71,7 @@ describe("#100 穴1 CORS は許可リスト以外を反射しない", () => {
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://ask.example");
   });
 
-  // #209: AnkiWeb本体のOrigin。保険として残す。
+  // #209: the AnkiWeb origin. Kept as insurance.
   it("#209 AnkiWeb のOriginは通す", async () => {
     const res = await handleCoreRequest(
       new Request("https://ask.example/api/ask/models", {
@@ -82,9 +82,9 @@ describe("#100 穴1 CORS は許可リスト以外を反射しない", () => {
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://ankiweb.net");
   });
 
-  // #209 grill: カードJSは隔離ドメイン ankiuser.net から走る。
-  // 実測: console 苦情文 `from origin 'https://ankiuser.net'`。
-  // ここを切ると AnkiWeb 上のカードの全fetchが読めなくなる。
+  // #209 grill: card JS runs from the isolated ankiuser.net domain.
+  // Observed: console complaint `from origin 'https://ankiuser.net'`.
+  // Cutting this makes every fetch from cards on AnkiWeb unreadable.
   it("#209 grill AnkiWeb のカード隔離ドメインは通す", async () => {
     const res = await handleCoreRequest(
       new Request("https://ask.example/api/ask/models", {
@@ -95,8 +95,8 @@ describe("#100 穴1 CORS は許可リスト以外を反射しない", () => {
     expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://ankiuser.net");
   });
 
-  // AnkiDroid/AnkiMobile は reviewer をローカルHTTPサーバで配信する。
-  // ここを切るとカードの全fetchが読めなくなる（#100 で実際に踏んだ）。
+  // AnkiDroid/AnkiMobile serve the reviewer from a local HTTP server.
+  // Cutting this makes every fetch from cards unreadable (hit this in #100).
   it("AnkiDroid/AnkiMobile のループバックOriginは通す", async () => {
     for (const origin of [
       "http://127.0.0.1:42665",

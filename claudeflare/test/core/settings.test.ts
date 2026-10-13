@@ -1,6 +1,6 @@
-// #260 OS3b: settings はコア入口 (src/core.ts) の route。認証はアクセストークン
-// (ASK_TOKEN) 1本。JWT identity（所有者分離）と JWT_SECRET 不在の劣化は完全版
-// (test/full/settings-jwt.test.ts) が完全版入口を向いて検証する。
+// #260 OS3b: settings is a core-entry (src/core.ts) route. Auth is the access token
+// (ASK_TOKEN) alone. JWT identity (owner separation) and missing-JWT_SECRET degradation
+// are covered via the full entry by test/full/settings-jwt.test.ts.
 import { describe, expect, it } from "vitest";
 import { handleCoreRequest, type CoreDeps, type CoreEnv } from "../../src/core";
 import { memoryStore } from "../../src/stores";
@@ -53,7 +53,7 @@ describe("S12 export→別端末importで同環境が再現する", () => {
     expect(saved.saved).toBe(true);
     expect(typeof saved.updatedAt).toBe("string");
 
-    // 別端末（同一ユーザ・別store参照ではなく同一KV）からのimport
+    // Import from another device (same user, same KV — not a separate store reference)
     const get = await handleCoreRequest(authed("GET", "/api/settings", jwt), env(), d);
     expect(get.status).toBe(200);
     const body = (await get.json()) as { settings?: unknown; updatedAt?: unknown };

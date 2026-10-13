@@ -1,5 +1,7 @@
 # umeboshi-ask (OSS)
 
+日本語版: [README.ja.md](README.ja.md)
+
 Self-hosted study helper for Anki.
 A Cloudflare Worker core, an Anki panel, and an Anki add-on in one package.
 

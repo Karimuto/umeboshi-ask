@@ -1,5 +1,5 @@
-// #260 OS3b: panel はコア入口 (src/core.ts) の route。完全版も同じ
-// readPanelRelease を呼ぶので挙動は共有だが、入口はコアを向く。
+// #260 OS3b: panel is a core-entry (src/core.ts) route. The full build calls the same
+// readPanelRelease, so behavior is shared, but the entry here targets core.
 import { describe, expect, it } from "vitest";
 import { handleCoreRequest } from "../../src/core";
 import { memoryStore } from "../../src/stores";

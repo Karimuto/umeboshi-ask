@@ -1,8 +1,8 @@
-<%# askScaffold.ejs — S1足場＋S7設定モーダル（フォルダ型5タブ＋ドリルインナビ＋検索結果リスト＋送信モード＋プロンプト編集＋言語上書き＋MIT一行）。
-    S2でSSE実送信、S3で文脈添付、S5でBearer認証、S6で保存実装済み、S8でモデルdropdown、S12でexport/import実装済み。
-    残量・課金（S10/S11）は OS5a で、同意ダイアログは OS5b で private module
-    （src/commercial/panel-module.js）へ分離した。base は同意を持たず、送信は
-    module の登録が無い即座に通る。 %>
+<%# askScaffold.ejs -- S1 scaffold + S7 settings modal (folder-style 5 tabs + drill-in nav + search list + send mode + prompt editing + language override + MIT line).
+    S2 real SSE send, S3 context attach, S5 Bearer auth, S6 save done, S8 model dropdown, S12 export/import done.
+    Balance (S10/S11) and consent dialog (OS5b) live in the private module
+    (src/commercial/panel-module.js). Base holds no consent; send passes
+    immediately when no module is registered. %>
 <style>
   :root, :root[data-theme="light"] {
     --ask-bg: #EDF1F4;
@@ -20,20 +20,19 @@
     --ask-tab-inactive-fg: #5A6472;
     --ask-tabstrip-bg: #EBE9E7;
   }
-  /* #82 Anki Desktop は reviewer 自身の document にカードを innerHTML で埋め込む
-     （ts/reviewer/index.ts:125。iframe も shadow root も無い）。そのため Anki が
-     注入する CSS がそのまま当方の要素に効く。upstream で実測した4本:
+  /* #82 Anki Desktop embeds the card via innerHTML into the reviewer's own document
+     (ts/reviewer/index.ts:125. No iframe or shadow root). So Anki-injected CSS
+     hits our elements directly. Four upstream rules measured:
        - qt/aqt/data/web/css/webview.scss : `* { box-sizing: content-box; }`
-         （Anki 自身のコメントに「add-ons を壊すので border-box は採らない」とある）
+         (Anki's own comment says border-box is avoided so add-ons keep working)
        - ts/reviewer/reviewer.scss          : `button { margin: 1em 0.5em; }`
        - ts/lib/sass/buttons.scss           : `button { padding/background/
-         border-radius/font-weight/outline }` と `button:hover { background }`
+         border-radius/font-weight/outline }` and `button:hover { background }`
        - ts/lib/sass/buttons.scss           : `.isWin button { font-size: 12px; }`
-     実害: model-pick が box-sizing を宣言していないため content-box で 24.4px
-     だけ幅がはみ出し、Effort ボタンに食い込んだ（A1・A3・B1）。
-     :where() の詳細度は 0 なので、この防御を1か所に置いても後続の当方宣言に
-     必ず負ける Regist する。#93 が thread-head だけ個別に直したtezza可以被
-     置き換えている。 */
+     Harm: model-pick declared no box-sizing, so content-box overflowed 24.4px
+     into the Effort button (A1/A3/B1).
+     :where() has 0 specificity, so this guard always loses to our later rules.
+     Keep it registered here. #93 fixed thread-head separately (kept as-is). */
   :where(#umeboshi-ask, #umeboshi-ask-settings-modal),
   :where(#umeboshi-ask, #umeboshi-ask-settings-modal) *,
   :where(#umeboshi-ask, #umeboshi-ask-settings-modal) *::before,
@@ -49,8 +48,8 @@
     border: 1px solid var(--ask-danger-border); border-radius: 12px;
     padding: .5rem .75rem; margin-bottom: .5rem; font-weight: bold;
   }
-  /* #127 AnkiDroid は origin(ポート)がセッションごとに変わるため localStorage が毎回消える。
-     CardID バナーと同系統の赤系。ただし保存はブロックせず（Q2=a）、案内のみ。 */
+  /* #127 AnkiDroid rebuilds origin (port) every session, so localStorage starts empty.
+     Same red family as the CardID banner. Never blocks save (Q2=a); notice only. */
   #umeboshi-ask-storage-banner {
     background: var(--ask-danger-bg); color: var(--ask-danger-fg);
     border: 1px solid var(--ask-danger-border); border-radius: 12px;
@@ -63,34 +62,34 @@
   #umeboshi-ask button .umeboshi-ask-ic svg { width: 100%; height: 100%; fill: currentColor; }
   #umeboshi-ask button .umeboshi-ask-ic:only-child { margin-right: 0; }
   #umeboshi-ask-compose { background: #FBEFF2; background: linear-gradient(135deg, #F8E0E6 0%, #E6AEBE 35%, #EBCBC0 65%, #D7899B 100%); color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 14px; padding: .9rem 1rem 0; margin: .75rem; box-shadow: 0 6px 20px rgba(0,0,0,.10); backdrop-filter: blur(16px) saturate(160%); -webkit-backdrop-filter: blur(16px) saturate(160%); }
-  /* #89 余白: 下部のログイン行（#umeboshi-ask-auth）はピル型ボタンの影が約 8px
-     下へ伸びるため、padding-bottom 1rem だと目に見える空きは 8px しかない。
-     2rem に上げてピル下の余白を約 24px 確保する。 */
+  /* #89 Spacing: the login row (#umeboshi-ask-auth) casts pill-button shadows ~8px
+     down, so padding-bottom 1rem leaves only 8px visible.
+     Raised to 2rem to keep ~24px under the pills. */
   #umeboshi-ask-controls { margin: .75rem -1rem 0; padding: .75rem 1rem 2rem; background: rgba(255,255,255,.74); backdrop-filter: blur(16px) saturate(160%); -webkit-backdrop-filter: blur(16px) saturate(160%); border-top: 1px solid rgba(255,255,255,.9); border-radius: 0 0 13px 13px; }
   #umeboshi-ask-input-row { display: flex; gap: .65rem; align-items: flex-end; }
   #umeboshi-ask-input { flex: 1; min-height: 3.2rem; padding: .6rem .7rem; resize: vertical; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 16px; font-size: 16px; line-height: 1.8; box-shadow: inset 2px 2px 5px rgba(163,177,198,.5), inset -2px -2px 5px rgba(255,255,255,.9); }
-  /* #124 model/effort の✕は44pxの箱に1文字だけなので、リセットの text-align:inherit
-     （実質 start）だと✕が左へ寄る。箱の中央へ明示配置する。 */
+  /* #124 model/effort close sits alone in a 44px box, so the reset text-align:inherit
+     (effectively start) pulls it left. Center it explicitly. */
   #umeboshi-ask-model-close, #umeboshi-ask-effort-close { text-align: center; }
   #umeboshi-ask-send-btn { background: #93233F; color: #FFFFFF; border: none; border-radius: 9999px; min-height: 48px; min-width: 5.5rem; padding: .7rem 1.3rem; font-size: 1rem; font-weight: 700; line-height: 1.4; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 4px 10px rgba(0,0,0,.18); text-align: center; }
   #umeboshi-ask-send-btn:disabled { opacity: .55; cursor: default; box-shadow: none; }
   #umeboshi-ask-send-btn:hover:not(:disabled) { background: var(--ask-hover-ume); }
-  /* #124 「設定」pillは line-height を持たず根の1.8を継承して44x48.4になっていた。
-     ✕ボタンと同じline-height:1で44x44に揃え、glyphは箱の中央へ明示配置する。
-     （旧規則の background 等はそのまま残し、色・枠・影は変えない） */
+  /* #124 The settings pill had no line-height and inherited 1.8 from root (44x48.4).
+     Match the close buttons with line-height:1 for 44x44; center the glyph.
+     (Old background etc. untouched; colors/borders/shadows unchanged) */
   #umeboshi-ask-settings-btn { background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-height: 44px; min-width: 44px; padding: .55rem .7rem; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); text-align: center; }
   #umeboshi-ask-settings-btn:hover { background: var(--ask-hover); }
   #umeboshi-ask-send-hint { color: var(--ask-muted); font-size: .75rem; margin-top: .4rem; }
   #umeboshi-ask-models-status { color: var(--ask-muted); font-size: .8rem; margin-top: .4rem; }
-  /* #89 余白: 保存済み解説 はカード本文（hr）の直下に乗り、1.25rem しか空かなかった。
-     thread は #umeboshi-ask の先頭要素なので margin-top は親の 1.25rem と畳み込み、
-     実効マージンは大きい方（= この 2.5rem = 40px）になる。Thread 非表示時は
-     親の 1.25rem のまま変わらない。 */
+  /* #89 Spacing: saved explainer sat right under the card body (hr) with 1.25rem only.
+     thread is the first child of #umeboshi-ask, so margin-top collapses with the
+     parent 1.25rem; effective margin is the larger (2.5rem = 40px). Hidden thread
+     keeps the parent 1.25rem. */
   #umeboshi-ask-thread { background: #FFFFFF; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 14px; padding: .9rem 1rem; margin: 2.5rem .75rem .75rem; box-shadow: 0 6px 20px rgba(0,0,0,.10); text-align: left; }
   #umeboshi-ask-thread[hidden] { display: none; }
   #umeboshi-ask-thread-title { font-weight: bold; margin-bottom: .4rem; }
   .umeboshi-ask-thread-item { background: rgba(255,255,255,.5); border: 1px solid rgba(255,255,255,.8); border-radius: 10px; padding: .5rem .75rem; margin-bottom: .6rem; }
-  /* #51 Saved-Thread Edit: 表示と一目で区別できる白カード＋DESIGN準拠の保存/キャンセル。 */
+  /* #51 Saved-Thread Edit: white card tells it apart at a glance + DESIGN save/cancel. */
   .umeboshi-ask-thread-item.is-editing { background: #FFFFFF; border: 1px solid rgba(255,255,255,.9); border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.10); }
   .umeboshi-ask-thread-edit-label { display: block; font-size: 12px; font-weight: 700; line-height: 1.4; color: #5A6472; margin: .5rem 0 .25rem; }
   .umeboshi-ask-thread-edit-input { display: block; width: 100%; box-sizing: border-box; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 16px; padding: 12px; font-size: 16px; line-height: 1.8; box-shadow: inset 2px 2px 5px rgba(163,177,198,.5), inset -2px -2px 5px rgba(255,255,255,.9); resize: vertical; }
@@ -99,18 +98,18 @@
   .umeboshi-ask-thread-edit-actions { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: .6rem; }
   .umeboshi-ask-thread-edit-actions .umeboshi-ask-thread-save { background: #93233F; color: #FFFFFF; border: 1px solid #93233F; border-radius: 9999px; padding: .55rem 1rem; font-size: .8rem; font-weight: 700; line-height: 1.4; min-height: 44px; cursor: pointer; box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 4px 10px rgba(0,0,0,.18); }
   .umeboshi-ask-thread-edit-actions .umeboshi-ask-thread-cancel { background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; padding: .55rem 1rem; font-size: .8rem; font-weight: 700; line-height: 1.4; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
-  /* #84 保存済み解説の各行の見出し。左端を item の content-box にそろえる。 */
-  /* #93 Anki の card CSS に .isWin button{font-size:12px} と button{margin:1em .5em} があって、 */
-  /*     見出しが 12px（本文16pxより小さい）、本文と操作ボタンの左端が +6px ずれていた。 */
-  /* #93 ID を足して (1,1,0) で上書きし margin は 0 に戻す。見出しは本文の +15% にする。 */
+  /* #84 Saved-explainer row headings. Align left edge to the item content-box. */
+  /* #93 Anki card CSS has .isWin button{font-size:12px} and button{margin:1em .5em}, */
+  /*     so headings shrank to 12px (body 16px) and body/action left edges drifted +6px. */
+  /* #93 Prefix the ID for (1,1,0), reset margin to 0. Headings sit +15% over body. */
   #umeboshi-ask .umeboshi-ask-thread-head { display: flex; width: 100%; box-sizing: border-box; gap: .5rem; align-items: baseline; text-align: left; background: transparent; border: none; border-radius: 10px; color: var(--ask-fg); margin: 0; padding: .25rem 0; cursor: pointer; font-size: 1.15em; min-height: 44px; box-shadow: none; }
   .umeboshi-ask-thread-head:hover { background: var(--ask-hover); }
   .umeboshi-ask-thread-head-mark { flex: none; display: inline-block; width: 1.5rem; text-align: left; color: var(--ask-muted); }
   .umeboshi-ask-thread-head-text { flex: 1; min-width: 0; font-weight: bold; white-space: pre-wrap; overflow-wrap: break-word; }
   .umeboshi-ask-thread-body[hidden] { display: none; }
-  /* #93 案B: ▶/▼ を幅 1.5rem の溝に収め、head の gap .5rem と合わせて 2rem だけ字下げする。 */
-  /* #93 本文・操作ボタンの左端が見出しの文字と一致する（溝 1.5rem + gap .5rem = 字下げ 2rem）。 */
-  /* #93 両方とも rem なので、Anki の html 基準（15px）や端末が変わっても比率が保たれる。 */
+  /* #93 Plan B: fit markers in a 1.5rem gutter; with head gap .5rem indent 2rem. */
+  /* #93 Body/action left edges meet the heading glyphs (gutter 1.5rem + gap .5rem = 2rem). */
+  /* #93 All rem, so the ratio holds under the Anki html base (15px) and other devices. */
   .umeboshi-ask-thread-body { padding-left: 2rem; }
   .umeboshi-ask-thread-a { margin: .4rem 0; }
   .umeboshi-ask-thread-status { color: var(--ask-muted); font-size: .8rem; }
@@ -129,7 +128,7 @@
   .umeboshi-ask-msg { background: transparent; border: none; border-radius: 0; padding: 0; margin: .4rem 0; display: flex; flex-direction: column; gap: .4rem; }
   .umeboshi-ask-msg-q { align-self: flex-end; max-width: 85%; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 14px 14px 4px 14px; padding: .45rem .7rem; font-weight: bold; white-space: pre-wrap; overflow-wrap: break-word; }
   .umeboshi-ask-msg-a { align-self: flex-start; width: 100%; box-sizing: border-box; background: #FFFFFF; color: #1B1E24; border: 1px solid var(--ask-border); border-left: 3px solid var(--ask-accent); border-radius: 4px 14px 14px 14px; padding: .45rem .7rem; margin: 0; overflow-wrap: break-word; }
-  /* #87 中断 Message に残す thinking。#umeboshi-ask-thinking と同じ見た目（.85rem / 減色）。 */
+  /* #87 thinking kept in an aborted Message. Same look as #umeboshi-ask-thinking (.85rem / muted). */
   .umeboshi-ask-msg-thinking { margin: 0; font-size: .85rem; color: var(--ask-muted); align-self: flex-start; width: 100%; box-sizing: border-box; }
   .umeboshi-ask-msg-thinking-body { white-space: pre-wrap; overflow-wrap: break-word; }
   .umeboshi-ask-msg-status { color: var(--ask-muted); font-size: .8rem; align-self: flex-start; }
@@ -139,27 +138,27 @@
   .umeboshi-ask-thread-body .umeboshi-ask-row button:hover, .umeboshi-ask-msg .umeboshi-ask-row button:hover { background: var(--ask-hover); }
   /* umeboshi-ask:module:css:e begin */
   /* umeboshi-ask:module:css:e end */
-  /* #250 Copy URL の手運び導線（URL表示＋コピー）はモデル選択と同じ popup にした。
-     inline の箱（#76）は撤廃。値は下の #umeboshi-ask-url-popup（モデルpopupと完全に同一）。 */
+  /* #250 Copy-URL hand-carry flow (URL view + copy) shares the model popup.
+     The inline box (#76) is gone. Value lives in #umeboshi-ask-url-popup below (same as model popup). */
   /* umeboshi-ask:module:css:a begin */
   /* umeboshi-ask:module:css:a end */
   .umeboshi-ask-url-input { box-sizing: border-box; width: 100%; min-width: 0; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: .5rem; padding: .5rem .6rem; min-height: 44px; font-size: .78rem; font-family: monospace; box-shadow: inset 2px 2px 5px rgba(163,177,198,.5), inset -2px -2px 5px rgba(255,255,255,.9); }
-  /* #82 root の ID を前置（(1,1,0)）。Anki の `.isWin button`/`.fancy button` に勝つ。
-     変異注入テストがこの class を検出した（メッセージ内のコピーボタンは初期描画に
-     現れないため、ブラウザ実測では漏れていた）。 */
+  /* #82 Prefix root ID ((1,1,0)). Beats Anki `.isWin button`/`.fancy button`.
+     Mutation-injection tests caught this class (message copy buttons miss the first
+     paint, so live browser checks had missed it). */
   #umeboshi-ask .umeboshi-ask-copy-btn { align-self: flex-start; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; padding: .45rem .8rem; min-height: 44px; font-size: .85rem; font-weight: 400; line-height: 1.4; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
   #umeboshi-ask .umeboshi-ask-copy-btn:hover { background: var(--ask-hover); }
   /* umeboshi-ask:module:css:b begin */
   /* umeboshi-ask:module:css:b end */
   #umeboshi-ask-url-copy-status { min-height: 1.2em; }
-  /* 説明文は .umeboshi-ask-note を再利用しない。設定パネルは detail-mode で .umeboshi-ask-note を隠す
-     仕様（ドリルイン既存CSS）のため、同じクラスだと案内が空打ちになる。 */
+  /* Never reuse .umeboshi-ask-note for explainer text. The settings panel hides .umeboshi-ask-note
+     in detail-mode (drill-in CSS), so sharing the class would render the notice blank. */
   .umeboshi-ask-fallback-note { color: var(--ask-muted); font-size: .8rem; }
   #umeboshi-ask-model-row { display: flex; gap: .5rem; align-items: center; font-size: .85rem; flex-wrap: wrap; }
   #umeboshi-ask-model { flex: 1; min-width: 0; text-align: left; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; padding: .5rem .8rem; min-height: 44px; font-size: .95rem; line-height: 1.5; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); overflow-wrap: anywhere; }
   #umeboshi-ask-model:disabled { opacity: .55; cursor: default; box-shadow: none; }
   #umeboshi-ask button:focus-visible, #umeboshi-ask input:focus-visible, #umeboshi-ask textarea:focus-visible { outline: 2px solid #93233F; outline-offset: 2px; }
-  /* #47 モデルpopup（非native・granumorphism）。button＋fixed層だけでAnkiのWebViewでも動く。blur非対応では半透明の dim＋白シートに落ち着く。 */
+  /* #47 Model popup (non-native, glassmorphism). Buttons + fixed layer only, works in Anki WebView. Falls back to dim + white sheet where blur is missing. */
   #umeboshi-ask-model-popup { position: fixed; inset: 0; z-index: 10000; }
   #umeboshi-ask-model-popup[hidden] { display: none; }
   #umeboshi-ask-model-backdrop { position: absolute; inset: 0; background: rgba(27,30,36,.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
@@ -170,19 +169,19 @@
   #umeboshi-ask-model-list { overflow-y: auto; display: flex; flex-direction: column; gap: .4rem; }
   #umeboshi-ask-model-list button:not(.umeboshi-ask-model-pick):not(.umeboshi-ask-effort-btn) { display: flex; width: 100%; box-sizing: border-box; text-align: left; align-items: center; gap: .5rem; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .7rem; font-size: .95rem; line-height: 1.5; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); overflow-wrap: anywhere; }
   #umeboshi-ask-model-list button:not(.umeboshi-ask-model-pick):not(.umeboshi-ask-effort-btn) .umeboshi-ask-model-name { flex: 1; min-width: 0; }
-  /* #198 強さの記号（🧠＋数字）はモデル一覧・Effort一覧・4段階の3面で同じ見た目に揃える。
-     セレクタは3面分を並べる（共通classは Anki の詳細度競合を避けるためID前置を保つ）。 */
+  /* #198 Strength badge (brain + number) shares one look across model / Effort / 4-tier lists.
+     List all three selectors (keep ID prefix; no shared class, dodges Anki specificity fights). */
   #umeboshi-ask-model-list button .umeboshi-ask-model-score, #umeboshi-ask-effort-list button .umeboshi-ask-model-score, #umeboshi-ask-tier-list button .umeboshi-ask-model-score { flex: none; position: relative; display: inline-flex; align-items: center; justify-content: center; width: 2.2em; height: 2.2em; font-size: 1.15rem; line-height: 1; }
   #umeboshi-ask-model-list button .umeboshi-ask-model-score .umeboshi-ask-model-score-num, #umeboshi-ask-effort-list button .umeboshi-ask-model-score .umeboshi-ask-model-score-num, #umeboshi-ask-tier-list button .umeboshi-ask-model-score .umeboshi-ask-model-score-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: .62em; font-weight: 900; color: #1B1E24; text-shadow: 0 0 2px #FFFFFF, 0 0 2px #FFFFFF, 1px 0 0 #FFFFFF, -1px 0 0 #FFFFFF, 0 1px 0 0 #FFFFFF, 0 -1px 0 0 #FFFFFF; pointer-events: none; }
-  /* #198 未計測は `—`。数字と同じ箱に入れ、読み上げだけを付け替える。 */
+  /* #198 Unmeasured shows `--`. Same box as digits; only the spoken label swaps. */
   #umeboshi-ask-effort-list button .umeboshi-ask-model-score-unknown, #umeboshi-ask-tier-list button .umeboshi-ask-model-score-unknown { flex: none; color: #5A6472; font-size: .95rem; }
-  /* #82 A2: 前半の `button[aria-checked="true"]` は (1,2,1)。175行の
-     `button.umeboshi-ask-model-pick` も (1,2,1) で詳細度が同じなので、ソース順で
-     後ろの 175行が背景と枠を上書きし、「太字だけ」になっていた。class を含む
-     セレクタを足して詳細度を上げ、選択中の白＋梅枠を確実に効かせる。 */
+  /* #82 A2: first half `button[aria-checked="true"]` is (1,2,1). Line-175
+     `button.umeboshi-ask-model-pick` ties at (1,2,1), so later source order
+     overrode bg/border and left "bold only". Add a classed selector to raise
+     specificity so selected white + ume border always wins. */
   #umeboshi-ask-model-list button[aria-checked="true"], #umeboshi-ask-model-list button.umeboshi-ask-model-pick[aria-checked="true"] { background: #FFFFFF; border-color: #93233F; font-weight: bold; }
   #umeboshi-ask-model-list button:disabled { opacity: .55; cursor: default; box-shadow: none; }
-  /* #66 Effort子popup（親popup内の入れ子・button＋fixed層でAnki WebView対応）。 */
+  /* #66 Effort child popup (nested in parent popup; buttons + fixed layer for Anki WebView). */
   #umeboshi-ask-effort-popup { position: fixed; inset: 0; z-index: 10001; }
   #umeboshi-ask-effort-popup[hidden] { display: none; }
   #umeboshi-ask-effort-backdrop { position: absolute; inset: 0; background: rgba(27,30,36,.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
@@ -195,9 +194,9 @@
   #umeboshi-ask-effort-list { overflow-y: auto; display: flex; flex-direction: column; gap: .4rem; }
   #umeboshi-ask-effort-list button { display: block; width: 100%; box-sizing: border-box; text-align: left; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .7rem; font-size: .95rem; line-height: 1.5; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
   #umeboshi-ask-effort-list button[aria-checked="true"] { background: #FFFFFF; border-color: #93233F; font-weight: bold; }
-  /* #198 4段階（ModelTier）popup。モデルpopupと同じ button＋fixed層（#47 と同じ理由で
-     native UI は使わない）。z-index はモデルpopup(10000)より上にし、詳細モデル選択から
-     モデルpopupへ渡すときは必ず閉じてから開く。 */
+  /* #198 4-tier (ModelTier) popup. Same buttons + fixed layer as model popup (#47, same reason:
+     no native UI). z-index sits above model popup (10000); always close it before
+     handing off from detail-model select to the model popup. */
   #umeboshi-ask-tier-popup { position: fixed; inset: 0; z-index: 10002; }
   #umeboshi-ask-tier-popup[hidden] { display: none; }
   #umeboshi-ask-tier-backdrop { position: absolute; inset: 0; background: rgba(27,30,36,.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
@@ -206,7 +205,7 @@
   #umeboshi-ask-tier-sheet-head b { flex: 1; font-size: 1rem; }
   #umeboshi-ask-tier-close { flex: none; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-width: 44px; min-height: 44px; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
   #umeboshi-ask-tier-list { overflow-y: auto; display: flex; flex-direction: column; gap: .4rem; }
-  /* #198 級名・モデル名・強さ・残高の4点を1行に置く。級名は 4 段の並びを読む軸なので太字。 */
+  /* #198 Tier, model, strength, balance share one row. Tier name is bold as the 4-row reading axis. */
   #umeboshi-ask-tier-list button { display: flex; width: 100%; box-sizing: border-box; text-align: left; align-items: center; gap: .5rem; flex-wrap: wrap; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .7rem; font-size: .95rem; line-height: 1.5; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); overflow-wrap: anywhere; }
   #umeboshi-ask-tier-list button[aria-checked="true"] { background: #FFFFFF; border-color: #93233F; font-weight: bold; }
   #umeboshi-ask-tier-list button:disabled { opacity: .55; cursor: default; box-shadow: none; }
@@ -219,9 +218,9 @@
   #umeboshi-ask-tier-foot { display: flex; margin-top: .5rem; }
   #umeboshi-ask-tier-detail-btn { flex: 1; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .6rem .8rem; font-size: .85rem; line-height: 1.4; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
   #umeboshi-ask-tier-detail-btn:hover { background: var(--ask-hover); }
-  /* #250 Copy URL の手運び導線を出す popup。モデルpopup（#47）と同じ button＋fixed層。
-     backdrop・sheet・✕ の値はモデルpopupと完全に同じ（スタイルの単一化）。
-     z-index は全 popup の上（10003）。 */
+  /* #250 Popup for the Copy-URL hand-carry flow. Same buttons + fixed layer as model popup (#47).
+     backdrop/sheet/close values match the model popup exactly (single style).
+     z-index tops all popups (10003). */
   #umeboshi-ask-url-popup { position: fixed; inset: 0; z-index: 10003; }
   #umeboshi-ask-url-popup[hidden] { display: none; }
   #umeboshi-ask-url-backdrop { position: absolute; inset: 0; background: rgba(27,30,36,.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
@@ -229,28 +228,28 @@
   #umeboshi-ask-url-sheet-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .4rem; }
   #umeboshi-ask-url-sheet-head b { flex: 1; font-size: 1rem; }
   #umeboshi-ask-url-close { flex: none; background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 9999px; min-width: 44px; min-height: 44px; font-size: 1rem; line-height: 1; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); }
-  /* sheet の中身は 見出し→説明→URL欄→コピー行。隙間は inline の箱（#76）の .35rem を保つ。 */
+  /* Sheet order: heading -> note -> URL field -> copy row. Keeps the inline-box (#76) .35rem gap. */
   #umeboshi-ask-url-note { margin-bottom: .15rem; }
   #umeboshi-ask-url-input { margin-bottom: .35rem; }
   #umeboshi-ask-url-copy-status { flex: 1; min-width: 0; }
   .umeboshi-ask-model-row { display: grid; grid-template-columns: minmax(0, 1fr) 9.5rem; gap: .4rem; align-items: stretch; }
-  /* #82 box-sizing を明示する。Anki の `* { box-sizing: content-box }`（詳細度0）で
-     width:100% のまま幅がpadding+border分だけ余って Effort ボタンに食い込んだ。 */
+  /* #82 Declare box-sizing explicitly. Anki `* { box-sizing: content-box }` (specificity 0)
+     left width:100% overflowing padding+border into the Effort button. */
   #umeboshi-ask-model-list button.umeboshi-ask-model-pick { flex: none; min-width: 0; width: 100%; box-sizing: border-box; display: flex; flex-wrap: wrap; text-align: left; align-items: center; gap: .5rem; background: #EBE9E7; color: #1B1E24; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .7rem; font-size: .95rem; line-height: 1.5; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); overflow-wrap: anywhere; }
   #umeboshi-ask-model-list button.umeboshi-ask-model-pick .umeboshi-ask-model-name { flex: 1 1 auto; min-width: 0; }
-  /* #198 モデル一覧の行の級（アイコン＋級名）とモデル側。tier sheet と同じ形。 */
+  /* #198 Tier badge (icon + tier name) and model side on model-list rows. Same shape as tier sheet. */
   #umeboshi-ask-model-list button .umeboshi-ask-model-tier { flex: none; display: inline-flex; align-items: center; gap: .35rem; font-weight: 700; }
   #umeboshi-ask-model-list button .umeboshi-ask-model-tier-text { flex: none; }
   #umeboshi-ask-tier-list .umeboshi-ask-tier-icon-svg, #umeboshi-ask-model-list .umeboshi-ask-tier-icon-svg, .umeboshi-ask-back-svg { width: 1.3em; height: 1.3em; fill: currentColor; flex: none; }
   #umeboshi-ask-model-list button.umeboshi-ask-effort-btn { flex: none; min-width: 0; width: 100%; box-sizing: border-box; display: block; }
-  /* #82 Anki の `.isWin button`（0,1,1）と `.fancy button`（0,1,1）は詳細度が
-     class 単独（0,1,0）を上回るので、root の ID を前置して (1,1,0) まで上げる。
-     実測で font-size 12.8→12px・border-radius 10→0px・box-shadow 差し替えが起きていた。 */
+  /* #82 Anki `.isWin button` (0,1,1) and `.fancy button` (0,1,1) beat a lone
+     class (0,1,0), so prefix the root ID up to (1,1,0).
+     Measured swaps: font-size 12.8->12px, border-radius 10->0px, box-shadow replaced. */
   #umeboshi-ask .umeboshi-ask-effort-btn { background: #EBE9E7; color: #5A6472; border: 1px solid rgba(255,255,255,.9); border-radius: 10px; padding: .5rem .6rem; font-size: .8rem; line-height: 1.4; min-height: 44px; cursor: pointer; box-shadow: 2px 2px 6px rgba(163,177,198,.55), -2px -2px 6px rgba(255,255,255,.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* #82 A4/C1: model と effort のボタンに :hover が1本も無く、Anki の
-     `button:hover { background: var(--button-gradient-start) }` がそのまま出て
-     ほぼ黒の矩形になっていた（C1）。選択中と無効は hover を付けない。
-     詳細度は Anki の `button:hover` (0,1,1) と `.fancy button:hover` (0,2,1) に勝たせる。 */
+  /* #82 A4/C1: model/effort buttons had no :hover, so Anki
+     `button:hover { background: var(--button-gradient-start) }` bled through as a
+     near-black rect (C1). No hover on selected/disabled.
+     Specificity beats Anki `button:hover` (0,1,1) and `.fancy button:hover` (0,2,1). */
   #umeboshi-ask-model-list button.umeboshi-ask-model-pick:hover:not([aria-checked="true"]):not(:disabled) { background: var(--ask-hover); }
   #umeboshi-ask-model-list button.umeboshi-ask-effort-btn:hover:not(:disabled) { background: var(--ask-hover); }
   #umeboshi-ask-effort-list button:hover:not([aria-checked="true"]) { background: var(--ask-hover); }
@@ -258,10 +257,10 @@
   @media (prefers-reduced-motion: reduce) {
     #umeboshi-ask *, #umeboshi-ask-settings-modal * { animation: none !important; transition: none !important; }
   }
-  /* #26: Markdown描画の見た目（表・コード・引用・区切り線）。描画要素はpre-wrapを外す。 */
-  /* #215 左揃え: Anki のカードCSS は reviewer 文書に流入し text-align: center を
-     持ち込む（#82 で実測した4規則と同じ経路）。パネル側で明示して打ち消す。
-     面ごとに指定する（根元一括は送信ヒント等 issue 外の面まで変える）。 */
+  /* #26: Markdown look (tables, code, quotes, rules). Rendered nodes drop pre-wrap. */
+  /* #215 Left-align: Anki card CSS flows into the reviewer doc with text-align:center
+     (same 4-rule path measured in #82). Override explicitly on the panel side.
+     Per surface (a root-wide rule would also move out-of-issue faces like send hints). */
   .umeboshi-ask-md { overflow-wrap: break-word; text-align: left; }
   .umeboshi-ask-md h1, .umeboshi-ask-md h2, .umeboshi-ask-md h3 { margin: .5rem 0 .3rem; line-height: 1.4; }
   .umeboshi-ask-md h1 { font-size: 1.1rem; }
@@ -281,7 +280,7 @@
   /* umeboshi-ask:module:css:c end */
   /* umeboshi-ask:module:css:d begin */
   /* umeboshi-ask:module:css:d end */
-  /* ---- S7 設定モーダル: 右スライドイン・ライト限定 ---- */
+  /* ---- S7 settings modal: right slide-in, light only ---- */
   #umeboshi-ask-settings-modal {
     position: fixed; inset: 0; z-index: 9999;
     background: rgba(0,0,0,.4);
@@ -302,12 +301,12 @@
     padding: .55rem .7rem; border-bottom: 1px solid var(--ask-border);
   }
   .umeboshi-ask-head h3 { margin: 0; font-size: 1rem; flex: 1; }
-  /* ×に一本化：背景と一体化した明るめボタン */
+  /* Single close style: bright button blended into the background */
   #umeboshi-ask-settings-close {
     background: transparent; border: none; color: var(--ask-muted);
     font-size: 1.15rem; line-height: 1; padding: .35rem .5rem;
     border-radius: .45rem; cursor: pointer;
-    /* #82 Anki の `.fancy button` が box-shadow を足すので、flat 意図を明示する。 */
+    /* #82 Anki `.fancy button` adds a box-shadow, so declare the flat intent. */
     box-shadow: none;
   }
   #umeboshi-ask-settings-close:hover { background: var(--ask-hover); color: var(--ask-fg); }
@@ -326,14 +325,14 @@
   #umeboshi-ask-search-clear:hover { background: var(--ask-hover); color: var(--ask-fg); }
   #umeboshi-ask-search-clear[hidden] { display: none; }
   #umeboshi-ask-search-hint { color: var(--ask-muted); font-size: .75rem; margin-top: .25rem; }
-  /* フォルダ型タブ: Activeはパネルと一体化、下辺がつながる。5等幅 */
+  /* Folder tabs: active tab merges with the panel, bottom edge joins. 5 equal widths */
   .umeboshi-ask-tabs {
     display: flex; gap: .2rem; align-items: stretch;
     padding: .45rem .6rem 0; background: var(--ask-tabstrip-bg);
     border-bottom: 1px solid var(--ask-border);
   }
   .umeboshi-ask-tabs[hidden] { display: none; }
-  /* #82 root の ID を前置（(1,1,0)）。Anki の `.isWin button`/`.fancy button` に勝つ。 */
+  /* #82 Prefix root ID ((1,1,0)). Beats Anki `.isWin button`/`.fancy button`. */
   #umeboshi-ask-settings-modal .umeboshi-ask-tab {
     flex: 1 1 0; min-width: 0;
     border: 1px solid var(--ask-border); border-bottom: none;
@@ -350,20 +349,20 @@
     padding-bottom: .5rem; position: relative; z-index: 1;
     box-shadow: none;
   }
-  /* 言語ごとのタブ文字サイズ・改行調整フック (data-uilang=表示言語) */
+  /* Per-language tab size/wrap hook (data-uilang=display language) */
   .umeboshi-ask-drawer[data-uilang="ja"] .umeboshi-ask-tab { font-size: .72rem; }
   .umeboshi-ask-drawer[data-uilang="en"] .umeboshi-ask-tab { font-size: .7rem; }
   .umeboshi-ask-tab-count { font-size: .75em; margin-left: .25em; }
   .umeboshi-ask-body { flex: 1; overflow-y: auto; padding: .5rem .7rem .7rem; display: flex; flex-direction: column; gap: .7rem; }
   .umeboshi-ask-panel[hidden] { display: none; }
-  /* ドリルイン: menu-modeは項目行だけ、detail-modeは開いた項目だけ */
+  /* Drill-in: menu-mode shows item rows only, detail-mode the open item only */
   .umeboshi-ask-panel.menu-mode .umeboshi-ask-item { display: none; }
   .umeboshi-ask-panel.detail-mode .umeboshi-ask-menu,
   .umeboshi-ask-panel.detail-mode .umeboshi-ask-note { display: none; }
   .umeboshi-ask-panel.detail-mode .umeboshi-ask-item { display: none; }
   .umeboshi-ask-panel.detail-mode .umeboshi-ask-item.open { display: flex; }
   .umeboshi-ask-menu[hidden] { display: none; }
-  /* #82 root の ID を前置（(1,1,0)）。Anki の `.isWin button`/`.fancy button` に勝つ。 */
+  /* #82 Prefix root ID ((1,1,0)). Beats Anki `.isWin button`/`.fancy button`. */
   #umeboshi-ask-settings-modal .umeboshi-ask-menurow {
     display: flex; width: 100%; box-sizing: border-box;
     min-height: 3.2rem;
@@ -384,12 +383,12 @@
   }
   #umeboshi-ask-detailbar[hidden] { display: none; }
   #umeboshi-ask-detailbar b { flex: 1; font-size: .9rem; }
-  /* 詳細に戻る＋項目内ボタンを同一スタイルに統一 */
+  /* Detail-back and in-item buttons share one style */
   #umeboshi-ask-detail-back, .umeboshi-ask-item button {
     background: var(--ask-bg); color: var(--ask-fg);
     border: 1px solid var(--ask-border); border-radius: .4rem;
     padding: .25rem .55rem; font-size: .82rem; cursor: pointer;
-    /* #82 Anki の `.fancy button` が box-shadow を足すので、flat 意図を明示する。 */
+    /* #82 Anki `.fancy button` adds a box-shadow, so declare the flat intent. */
     box-shadow: none;
   }
   #umeboshi-ask-detail-back { flex: none; }
@@ -406,7 +405,7 @@
     border: 1px solid var(--ask-border); border-radius: .35rem;
     background: var(--ask-bg); color: var(--ask-fg); font-size: .85rem;
   }
-  /* プロンプト本文は縦に伸ばす。上限50vhで小画面の崩れを担保 */
+  /* Prompt body grows vertically. 50vh cap keeps small screens intact */
   .umeboshi-ask-item textarea { min-height: 12rem; max-height: 50vh; resize: vertical; }
   .umeboshi-ask-hit { outline: 2px solid var(--ask-accent); background: var(--ask-hit-bg); }
   .umeboshi-ask-note { color: var(--ask-muted); font-size: .8rem; margin: 0; }
@@ -484,8 +483,8 @@
       <div id="umeboshi-ask-model-list" role="listbox" aria-label="モデル選択"></div>
     </div>
   </div>
-  <!-- #198 4段階（ModelTier）選択。モデルボタンからここを開き、下部の詳細モデル選択で
-       従来のモデル一覧（#47）へ渡す。級は Worker の presets が正。 -->
+  <!-- #198 4-tier (ModelTier) select. Opened from the model button; the detail-model select below
+       hands off to the classic model list (#47). Worker presets are authoritative for tiers. -->
   <div id="umeboshi-ask-tier-popup" hidden>
     <div id="umeboshi-ask-tier-backdrop"></div>
     <div id="umeboshi-ask-tier-sheet" role="dialog" aria-modal="true" aria-label="4段階モデル選択">
@@ -512,9 +511,9 @@
       <div id="umeboshi-ask-effort-list" role="listbox" aria-label="Effort選択"></div>
     </div>
   </div>
-  <!-- #250 Copy URL の手運び導線（外部ページのURL）。モデルpopupと
-       同じ button＋fixed層。文字は開く瞬間に表示言語から引く（login / その他の外部ページ）。
-       静的HTMLに日本語を置かないのは #134 のゲート（英語UIに日本語を残さない）のため。 -->
+  <!-- #250 Copy-URL hand-carry flow (external page URL). Same
+       buttons + fixed layer as the model popup. Strings resolve from the display language at open
+       (login / other external pages). No Japanese in static HTML per the #134 gate (no Japanese left in English UI). -->
   <div id="umeboshi-ask-url-popup" hidden>
     <div id="umeboshi-ask-url-backdrop"></div>
     <div id="umeboshi-ask-url-sheet" role="dialog" aria-modal="true">
@@ -637,13 +636,13 @@
   "use strict";
   var root = (typeof window !== "undefined") ? window : {};
   var SETTINGS_KEY = "umeboshi-ask:settings:v1";
-  /* #256 OS2b: 自己ホスト Worker への接続情報。設定JSON（SETTINGS_KEY）には
-     載せない。トークンをサーバーへ送らないため（export/import の対象外）。
-     別端末へは手で貼り直す。空欄なら既定の公式 Worker に戻る。 */
+  /* #256 OS2b: self-hosted Worker connection info. Kept out of the settings JSON (SETTINGS_KEY)
+     to never send the token to a server (excluded from export/import).
+     Re-paste by hand on other devices. Blank falls back to the official Worker. */
   var WORKER_URL_KEY = "umeboshi-ask:worker-url:v1";
   var WORKER_TOKEN_KEY = "umeboshi-ask:worker-token:v1";
   var DEFAULT_API_BASE = "https://umeboshi-ask.umeboshi-ask.workers.dev";
-  /* OS5a: credit タブは module が script シームで TAB_ORDER に足す。 */
+  /* OS5a: the module appends the credit tab to TAB_ORDER via the script seam. */
   var TAB_ORDER = ["general", "prompts", "lang", "account"];
   var DEFAULT_KEYS = ["why", "what", "significance", "origin", "eli5"];
 
@@ -689,12 +688,12 @@
     } catch (e) { return false; }
   }
 
-  /* ---------- #127 origin 変更検知（localStorage はポートで分割、Cookie は分割しない） ---------- */
-  /* AnkiDroid は origin = http://127.0.0.1:<port>/ を Deck ごとに作り直すため、ポートが変わると
-     localStorage は別オリジン＝毎回空になる（domStorageEnabled は常に true なので例外は出ない）。
-     RFC 6265 §5.3「cookies for a given host are shared across all the ports on that host」により
-     Cookie だけはポートを跨いで残る。この非対称を使うと、リセットを「推測」ではなく証明できる。
-     判定専用。認証情報はこの Cookie に載せない（Q3=a）。 */
+  /* ---------- #127 origin-change detection (localStorage splits by port, Cookie does not) ---------- */
+  /* AnkiDroid rebuilds origin = http://127.0.0.1:<port>/ per Deck, so a port change makes
+     localStorage a fresh empty origin each time (domStorageEnabled is always true, so no throw).
+     Per RFC 6265 S5.3, cookies for a given host are shared across all the ports on that host, so
+     only the Cookie survives port changes. This asymmetry proves (not guesses) a reset.
+     Detection only. Never store credentials in this Cookie (Q3=a). */
   var ORIGIN_COOKIE = "ask_origin";
   function cookiePort() {
     try {
@@ -710,7 +709,7 @@
       return loc && typeof loc.port === "string" ? loc.port : null;
     } catch (e2) { return null; }
   }
-  /* max-age 必須: セッション Cookie は WebView プロセス死で消え、Detection するバグを再現してしまう。 */
+  /* max-age is required: a session Cookie dies with the WebView process and replays the detection bug. */
   function markPort() {
     try {
       var doc = root.document;
@@ -719,23 +718,23 @@
       doc.cookie = ORIGIN_COOKIE + "=" + p + ";path=/;max-age=31536000;SameSite=Lax";
     } catch (e) {}
   }
-  /* 証明ロジック。偽陽性は論理的に成立しない:
-     誤検出には「Cookie が残った」＋「前回 localStorage への書込みが成功」＋「同一オリジンなのに
-     今の localStorage が空」の3つが同時に要るが、同一オリジンなら前回書いた器が今の器そのものなので
-     空にはならない。ポート再利用は誤検出ではなく「警告が出ない」= 現状の退化側にしか倒れない。 */
+  /* Proof logic. False positives are logically impossible:
+     a false hit needs "Cookie survived" + "last localStorage write succeeded" + "same origin yet
+     localStorage is now empty" at once; on the same origin the store written last time IS the current one, so
+     it cannot be empty. Port reuse only suppresses the warning (degrades to status quo), never false-fires. */
   function storageWasReset() {
     try {
       var prev = cookiePort();
       var cur = currentPort();
-      if (prev === null || cur === null) return false;   /* 初回起動は比較対象が無い＝断定しない */
-      if (prev === cur) return false;                    /* 同一ポート＝固定設定済み or 偶然再採番 */
-      if (storeGet(SETTINGS_KEY)) return false;           /* localStorage が生きていれば origin 判定は棄却 */
+      if (prev === null || cur === null) return false;   /* First boot has no baseline: never assert */
+      if (prev === cur) return false;                    /* Same port: pinned setup or coincidental reuse */
+      if (storeGet(SETTINGS_KEY)) return false;           /* Live localStorage rejects the origin verdict */
       return true;
     } catch (e3) { return false; }
   }
 
-  /* ---------- S7: 設定ストア（localStorage永続化・再起動後も保持） ---------- */
-  /* #42 言語方針（日英のみ）: 日本語ハードコードをLOCALESに集約。uiText(det.lang)で引く。 */
+  /* ---------- S7: settings store (localStorage-persisted, survives restart) ---------- */
+  /* #42 Language policy (ja/en only): collect Japanese hardcodes into LOCALES. Read via uiText(det.lang). */
   var LOCALES = {
     ja: {
       why: "なぜ?", what: "なに?", significance: "重要性?", origin: "語源?", eli5: "5歳にもわかるように",
@@ -749,13 +748,13 @@
       tabGeneral: "一般", tabPrompts: "プロンプト編集", tabLang: "言語", tabAccount: "アカウント",
       langTitle: "言語", langAuto: "自動判定", langJa: "日本語", langEn: "English",
       langStatus: "表示言語: ", langSource: "取得元: ", langFallbackHint: " — 言語設定が見つかりません。明示設定してください。",
-      /* #130 括弧・区切り・検索の語法。データ由来の表示もUI言語に追従させる。 */
+      /* #130 Paren/separator/search phrasing. Data-driven strings follow the UI language. */
       punctOpen: "（", punctClose: "）", punctDot: "・", searchQuote: "「」", countIn: "に __N__件", punctStop: "。",
       srcExplicit: "明示設定", srcDesktop: "Anki Desktop", srcDroid: "AnkiDroid", srcNavigator: "navigator", srcFallback: "検出不可", navigator: "navigator",
       sendModeTitle: "送信モード", sendModeButton: "ボタン送信（Enterで改行・Ctrl/Cmd+Enterで送信）", sendModeEnter: "エンター送信（Enterで送信・Shift+Enterで改行）",
       sendModeButtonShort: "ボタン送信", sendModeEnterShort: "エンター送信",
       sendHintButton: "Enterで改行・Ctrl/Cmd+Enterで送信", sendHintEnter: "Enterで送信・Shift+Enterで改行",
-      /* #256 OS2b 自己ホスト導線。トークンは端末内のみ（サーバーへ送らない）。 */
+      /* #256 OS2b self-host flow. Token stays on-device (never sent to a server). */
       workerUrlTitle: "接続先Worker", workerUrlNote: "自分でデプロイしたWorkerのURLを貼ると、質問と保存がそのWorkerに届きます。空欄なら公式Workerを使います。URLはhttpsではじまる形だけ受け付けます。",
       workerTokenTitle: "アクセストークン", workerTokenNote: "接続先Workerに設定したアクセストークン（ASK_TOKEN）を貼ると、解答を自分のWorkerに保存できます。空欄なら保存はこの端末内だけに行います。この値は端末内にのみ残り、サーバーへは送られません。",
       workerUrlInvalid: "URLの形が正しくないため、既定の公式Workerに戻しました。",
@@ -773,19 +772,19 @@
       modelsAvailable: "件のモデルが利用可能", modelsFailOption: "モデル一覧を取得できませんでした",
       modelsFail: "モデル一覧を取得できませんでした（Worker未デプロイ時は無視）", modelsFailFetch: "モデル一覧を取得できませんでした（この環境ではfetch不可）",
       modelSwitched: "モデルを切り替えました",
-      /* #198 4段階（ModelTier）の級名・入口・未計測。級名は site/ のモデル区分と同じ語。 */
+      /* #198 4-tier (ModelTier) tier names, entry, unmeasured. Tier names match site/ model classes. */
       tierTitle: "4段階モデル選択", tierAria: "4段階モデル選択",
       tierBasic: "ベーシック", tierMiddle: "ミドル", tierPremium: "プレミアム", tierUltra: "ウルトラ", tierCustom: "Custom",
       tierDetail: "詳細モデル選択", tierEmpty: "4段階の選択はまだ使えません", modelBack: "4段階に戻る", effortBack: "モデル選択に戻る",
       scoreUnknown: "—", scoreUnknownAria: "頭よさそうスコアは未計測",
-      /* #198 目安クレジットは選ぶ画面に出さない（human 決定）。強さだけを見せる。
-         #132 の読み上げ用ラベルは残す。 */
+      /* #198 Keep credit estimates off the picker (human decides). Show strength only.
+         Keep the #132 screen-reader labels. */
       smartScoreAria: "頭よさそうスコア ",
       effortLabel: "Effort", effortAria: "Effort選択", effortClose: "閉じる",
       effortAuto: "自動", effortNote: "高 effort は消費が増えることがあります",
       effortInvalid: "このモデルでは選べないEffortです。選び直してください",
       threadTitle: "保存済み解説", threadEmpty: "保存済みMessageはまだありません。気に入った回答の保存ボタンで残せます。",
-      /* #131 Thread見出しの空質問文言。括弧込みで言語ごとに持つ。 */
+      /* #131 Empty-question thread heading. Kept per language, parens included. */
       threadNoQ: "（質問なし）",
       stop: "停止", statusDone: "", statusError: "エラー: ", statusThinking: "生成中…", statusAborted: "中断しました",
       statusInterrupted: "中断しました（未保存）。保存ボタンで残せます。",
@@ -825,7 +824,7 @@
       tabGeneral: "General", tabPrompts: "Edit prompts", tabLang: "Language", tabAccount: "Account",
       langTitle: "Language", langAuto: "Auto", langJa: "日本語", langEn: "English",
       langStatus: "Display language: ", langSource: "Source: ", langFallbackHint: " — No language setting found. Choose one explicitly.",
-      /* #130 括弧・区切り・検索の語法。データ由来の表示もUI言語に追従させる。 */
+      /* #130 Paren/separator/search phrasing. Data-driven strings follow the UI language. */
       punctOpen: " (", punctClose: ")", punctDot: ", ", searchQuote: "\"\"", countIn: " (__N__)", punctStop: ".",
       srcExplicit: "Manual", srcDesktop: "Anki Desktop", srcDroid: "AnkiDroid", srcNavigator: "navigator", srcFallback: "Unknown", navigator: "navigator",
       sendModeTitle: "Send mode", sendModeButton: "Button send (Enter for newline, Ctrl/Cmd+Enter to send)", sendModeEnter: "Enter to send (Enter sends, Shift+Enter for newline)",
@@ -849,19 +848,19 @@
       modelsAvailable: " models available", modelsFailOption: "Could not load models",
       modelsFail: "Could not load models (ignored when Worker is not deployed)", modelsFailFetch: "Could not load models (fetch unavailable here)",
       modelSwitched: "Switched model",
-      /* #198 4段階（ModelTier）の級名・入口・未計測。級名は site/en のモデル区分と同じ語。 */
+      /* #198 4-tier (ModelTier) tier names, entry, unmeasured. Tier names match site/en model classes. */
       tierTitle: "Choose by tier", tierAria: "Choose by tier",
       tierBasic: "Basic", tierMiddle: "Middle", tierPremium: "Premium", tierUltra: "Ultra", tierCustom: "Custom",
       tierDetail: "Detailed model choice", tierEmpty: "Choosing by tier is not available yet", modelBack: "Back to tiers", effortBack: "Back to models",
       scoreUnknown: "—", scoreUnknownAria: "Smart score not measured",
-      /* #198 目安クレジットは選ぶ画面に出さない（human 決定）。強さだけを見せる。
-         #132 の読み上げ用ラベルは残す。 */
+      /* #198 Keep credit estimates off the picker (human decides). Show strength only.
+         Keep the #132 screen-reader labels. */
       smartScoreAria: "Smart score ",
       effortLabel: "Effort", effortAria: "Choose effort", effortClose: "Close",
       effortAuto: "Auto", effortNote: "Higher effort may cost more",
       effortInvalid: "This effort is not available for this model. Please choose again",
       threadTitle: "Saved Notes", threadEmpty: "No saved Messages yet. Save a good answer to keep it.",
-      /* #131 Thread見出しの空質問文言。括弧込みで言語ごとに持つ。 */
+      /* #131 Empty-question thread heading. Kept per language, parens included. */
       threadNoQ: "(no question)",
       stop: "Stop", statusDone: "", statusError: "Error: ", statusThinking: "Generating…", statusAborted: "Aborted",
       statusInterrupted: "Interrupted (unsaved). Save it with the save button.",
@@ -897,7 +896,7 @@
     origin: "「{question}」の語源・由来を、その言葉の実際の出所に沿って説明してください。語源を知れば意味が推測できることをゴールにしてください。簡潔に、読むのが簡単な量で、15〜30秒以内に読めるように書いてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}",
     eli5: "「{question}」について、5歳の子どもにもわかるように説明してください。たとえ話を多用し、むずかしい言葉には必ず補足を入れてください。簡潔に、読むのが簡単な量で、15〜30秒以内に読めるように書いてください。\n\n# カード文脈\n本文:\n{text}\n穴埋め情報:\n{clozeInfo}\n追加情報:\n{extra}"
   };
-  /* #42 Q5/Q10: Prompt Template本文はUI言語に連動。英語5種は日本語構造の1対1書き直し（機械翻訳量産）。差し込み名は変えない。 */
+  /* #42 Q5/Q10: prompt template bodies follow the UI language. The 5 English ones mirror the Japanese structure 1:1 (batch translation). Placeholder names unchanged. */
   var DEFAULT_PROMPTS_EN = {
     why: "Explain the causes, reasons, and background of \"{question}\" based on the card context. Briefly explain technical terms in ( ) on first use. Keep it short and easy to read within 15-30 seconds.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}",
     what: "Define \"{question}\" concisely based on the card context. Briefly explain technical terms in ( ) on first use. Keep it short and easy to read within 15-30 seconds.\n\n# Card context\nBody:\n{text}\nCloze info:\n{clozeInfo}\nExtra:\n{extra}",
@@ -909,7 +908,7 @@
   function defaultPromptsFor(lang) { return (lang === "en") ? DEFAULT_PROMPTS_EN : DEFAULT_PROMPTS; }
 
   function defaultSettings() {
-    /* #42 新規は表示言語の種で初期化。既存の編集済み本文はmergeSettingsが温存する。 */
+    /* #42 New entries start from the display-language kind. mergeSettings preserves edited bodies. */
     var lang = "ja";
     try { lang = detectLang({ lang: "auto" }).lang; } catch (e) {}
     var prompts = {};
@@ -968,7 +967,7 @@
       }
       return cur;
     },
-    // S2用: 質問キー/カスタムID → {label, body}
+    // S2: question key / custom ID -> {label, body}
     resolvePrompt: function(id) {
       var s = UmeboshiAskSettings.load();
       if (s.prompts && s.prompts[id]) return { label: s.prompts[id].label, body: s.prompts[id].body };
@@ -980,11 +979,11 @@
   };
   root.UmeboshiAskSettings = UmeboshiAskSettings;
 
-  /* ---------- S7: 言語（明示＞Anki Desktop＞AnkiDroid＞navigator＞EN） ---------- */
+  /* ---------- S7: language (explicit > Anki Desktop > AnkiDroid > navigator > EN) ---------- */
   function normalizeLang(tag) {
     var t = (tag || "").toLowerCase().replace(/_/g, "-");
     if (t.indexOf("ja") === 0) return "ja";
-    /* #42 日英のみ: es / zh 系入力は将来追加まで en に倒す（検出枝は残す）。 */
+    /* #42 ja/en only: fold es / zh inputs to en until added (keep the detect branch). */
     if (t.indexOf("es") === 0) return "en";
     if (t.indexOf("zh") === 0) return "en";
     if (t.indexOf("en") === 0) return "en";
@@ -993,7 +992,7 @@
   function detectLang(settings) {
     var explicit = settings && settings.lang ? settings.lang : "auto";
     if (explicit === "ja" || explicit === "en") return { lang: explicit, source: "explicit" };
-    /* #42 保存済み es / zh-CN は auto 扱いに寄せる。引数は変えない。 */
+    /* #42 Stored es / zh-CN fold to auto. Args unchanged. */
     var auto = (explicit === "auto" || explicit === "es" || explicit === "zh-CN");
     if (!auto) return { lang: "en", source: "explicit" };
     try {
@@ -1015,10 +1014,10 @@
     return { lang: "en", source: "fallback" };
   }
   function uiText(lang) { return LOCALES[lang] || LOCALES.en; }
-  /* OS5a: module 差し込み口。base は 4 層のシーム（markup・CSS・i18n・script）を
-     空で持ち、host build だけが src/commercial/panel-module.js を埋める。
-     script シームは IIFE の中に置かれるので、module はこの閉包の補助
-     （txNow・byId・copyToClipboard）をそのまま呼べる。 */
+  /* OS5a: module hook point. Base owns the 4 empty seams (markup, CSS, i18n, script);
+     only the host build fills src/commercial/panel-module.js.
+     The script seam sits inside the IIFE, so the module can call this closure's helpers
+     (txNow, byId, copyToClipboard) directly. */
   function addLocaleExtra(extra) {
     if (!extra) return;
     for (var lk in extra) {
@@ -1030,64 +1029,64 @@
       }
     }
   }
-  /* ---------- 送信ゲート（OS5b #263） ----------
-     同意は module（src/commercial/panel-module.js）が持つ。base は同意を持たない。
-     指令も module も無い endpoint（自己ホスト）は、匿名質問を止めないため即送信。
-     指令がある endpoint（公式）は module の読み込み完了まで送信を待つ。
-     取得の失敗・タイムアウトは fail-open（匿名質問は止めない・無限に待たない）。
-     module が登録した後の判断は待ち続ける。同意ダイアログは人間の操作待ちで、
-     ここを切ると同意なしで送るか、同意後の二重送信になる。
-     runtime の loader が module を取りに行うのは OS9b。ここまでが契約。 */
+  /* ---------- send gate (OS5b #263) ----------
+     Consent lives in the module (src/commercial/panel-module.js). Base holds no consent.
+     An endpoint with neither directive nor module (self-host) sends immediately, never blocking anonymous asks.
+     An endpoint with a directive (official) waits for the module to load before sending.
+     Fetch failure/timeout is fail-open (never block anonymous asks, never wait forever).
+     After the module registers, its verdict waits as long as needed. The consent dialog waits on a human, so
+     cutting it would send without consent or double-send after consent.
+     The runtime loader fetches the module in OS9b. That is the contract. */
   var SEND_GATE_TIMEOUT_MS = 10000;
-  var sendGateWaiter = null;   // module が登録する「送信してよいか」の関数
-  var moduleDirective = false; // 指令: この endpoint は module を配る
-  var moduleReadyWait = null;  // 指令がある endpoint の module 取得待ち
+  var sendGateWaiter = null;   // "may we send" fn the module registers
+  var moduleDirective = false; // directive: this endpoint serves the module
+  var moduleReadyWait = null;  // module fetch wait for a directed endpoint
   var moduleReadyDone = null;
   function registerSendGate(fn) {
     if (typeof fn !== "function") return;
     sendGateWaiter = fn;
-    /* 待っていた送信を解く。 */
+    /* Release the waiting send. */
     if (moduleReadyDone) { var done = moduleReadyDone; moduleReadyDone = null; done(); }
   }
   function setModuleDirective(on) { moduleDirective = !!on; }
-  /* module 取得の待ち。登録されたら true、上限に達したら false（fail-open）。 */
+  /* Module fetch wait. True once registered, false at the cap (fail-open). */
   function waitForSendGate() {
     if (typeof sendGateWaiter === "function") return Promise.resolve(true);
     if (!moduleReadyWait) {
       moduleReadyWait = new Promise(function(resolve) {
         var settled = false;
         var finish = function(ok) { if (settled) return; settled = true; resolve(ok); };
-        /* module が登録されたら取得完了（true）。上限に達したら取得失敗（false）。 */
+        /* Fetch completes (true) once the module registers; fails (false) at the cap. */
         moduleReadyDone = function() { finish(true); };
         setTimeout(function() { finish(false); }, sendGateTimeout());
       });
     }
     return moduleReadyWait;
   }
-  /* 上限。vm ハーネスが root から短くできる（fail-open の検証を速くするため）。 */
+  /* The cap. The vm harness can shorten it from root (to test fail-open fast). */
   function sendGateTimeout() {
     var v = (typeof root !== "undefined" && root) ? root.UmeboshiAskSendGateTimeoutMs : null;
     return (typeof v === "number" && v > 0) ? v : SEND_GATE_TIMEOUT_MS;
   }
-  /* 送信前に解く待機条件。null は「待つ物が無い」のでそのまま送る。
-     action = { key, freeText }（module が保留の再送に使う）。 */
+  /* Pre-send wait condition. Null means "nothing to wait for", so send directly.
+     action = { key, freeText } (the module reuses it for a held resend). */
   function awaitSendGate(action) {
     if (typeof sendGateWaiter !== "function" && !moduleDirective) return null;
     return waitForSendGate().then(function(ready) {
-      /* module を取得できなかった。匿名質問は止めない（fail-open）。 */
+      /* Module fetch failed. Never block anonymous asks (fail-open). */
       if (!ready) return true;
       return Promise.resolve(sendGateWaiter(action));
-    }).catch(function() { return true; });  // module 側の失敗も fail-open。
+    }).catch(function() { return true; });  // module-side failure is fail-open too.
   }
-  /* 送信ゲートを通してから送る。ゲートが無い即送信、同意待ちは module が解く。 */
+  /* Send through the send gate. No gate sends at once; module releases consent waits. */
   function sendThroughGate(key, freeText) {
     var wait = awaitSendGate({ key: key, freeText: !!freeText });
     if (!wait) { startAskFlow(key, freeText); return; }
     wait.then(function(ok) { if (ok !== false) startAskFlow(key, freeText); });
   }
-  /* 送信を取りやめたときに保留中の要求を破棄する口。同意の保留は module が持つ。 */
+  /* Hook to drop a held request on abort. The module owns the consent hold. */
   function dropPendingAsk() {}
-  /* 送信ゲート側の表示更新。同意状態の表示は module がこの 1 本で足す。 */
+  /* Display refresh on the send-gate side. The module adds the consent display via this one hook. */
   function refreshSendGates() { updateSendEnabled(); }
   root.UmeboshiAskSendGate = {
     register: registerSendGate,
@@ -1096,13 +1095,13 @@
   };
   /* umeboshi-ask:module:script begin */
   /* umeboshi-ask:module:script end */
-  /* #112: 文言表そのものも外から見る（ja/en のキー差分を機械的に落とすため）。 */
+  /* #112: the string tables stay visible from outside (to diff ja/en keys mechanically). */
   root.UmeboshiAskI18n = { normalizeLang: normalizeLang, detectLang: detectLang, uiText: uiText };
 <%- include('./askRenderer.ejs') -%>
 
 
 
-  /* ---------- 以下DOM依存。DOMなし（node検証時）はここで終了 ---------- */
+  /* ---------- DOM-dependent below. Without DOM (node check) stop here ---------- */
   var sendBtn = byId("umeboshi-ask-send-btn");
   var saveBtn = byId("umeboshi-ask-save-btn");
   var banner = byId("umeboshi-ask-cardid-banner");
@@ -1122,13 +1121,13 @@
   var detailTitle = byId("umeboshi-ask-detail-title");
   var resultsEl = byId("umeboshi-ask-results");
 
-  /* ナビ状態: menu(タブ内項目行) / results(検索結果行) / detail(項目詳細) */
+  /* Nav state: menu (in-tab item rows) / results (search result rows) / detail (item detail) */
   var currentTab = "general";
   var currentQuery = "";
-  var openDesc = null;   // {panel, key} 詳細表示中の項目
+  var openDesc = null;   // {panel, key} item in detail view
   var detailFrom = "tabs"; // 'tabs' | 'search'
 
-  /* #25 送信ボタンの有効化はここに一本化（残量切れ＞通常の順。送信中も停止用に有効のまま）。 */
+  /* #25 Send-button enabling lives here only (out-of-balance > normal. Stays enabled mid-send as stop). */
   function updateSendEnabled() {
     if (!sendBtn) return;
     if (typeof creditBlocked !== "undefined" && creditBlocked) {
@@ -1140,18 +1139,18 @@
     }
     renderSendStop();
   }
-  /* 送信⇔停止の見た目切替。停止中は送信ボタンを停止ボタンとして使う。 */
+  /* Send<->stop look swap. Mid-stop the send button serves as the stop button. */
   function setIconText(btn, icon, text) {
     if (!btn) return;
     var doc = (typeof document !== "undefined") ? document : null;
     while (btn.firstChild) btn.removeChild(btn.firstChild);
-    /* textContent代入が実DOMではテキストノードを作る。アイコンはその前に挿すので見た目文字は1回だけ。 */
+    /* A textContent assign creates a text node in a real DOM. The icon inserts before it, so the visible glyph paints once. */
     btn.textContent = text || "";
     if (doc && doc.createElement) {
       var ic = doc.createElement("span");
       ic.className = "umeboshi-ask-ic";
       ic.setAttribute("aria-hidden", "true");
-      /* 内蔵SVGのpathで描く。外部フォント・外部参照なし。 */
+      /* Drawn with a built-in SVG path. No external fonts or references. */
       ic.innerHTML = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"" + (icon || "") + "\"/></svg>";
       if (typeof btn.insertBefore === "function") btn.insertBefore(ic, btn.firstChild);
       else btn.appendChild(ic);
@@ -1164,7 +1163,7 @@
     else setIconText(sendBtn, t.iconSend, t.send);
   }
 
-  /* ---------- S7: 項目行のサブ表示（現在値の要約・Android式） ---------- */
+  /* ---------- S7: item-row sub display (current-value summary, Android style) ---------- */
   function itemSub(item) {
     var kind = item.getAttribute("data-subkey") || "";
     var lang = "ja";
@@ -1173,8 +1172,8 @@
     if (kind === "sendmode") {
       return UmeboshiAskSettings.load().sendMode === "enter" ? t.sendModeEnterShort : t.sendModeButtonShort;
     }
-    /* #256 OS2b: 接続先は現在の値（公式/自分のWorker）を、トークンは設定の有無だけ見せる
-       （トークンは端末内のみ。メニュー行に中身は出さない）。 */
+    /* #256 OS2b: show the endpoint as its current value (official/own Worker); show the token
+       only as set/unset (token stays on-device; never print it in the menu row). */
     if (kind === "workerurl") {
       return readWorkerUrl() ? t.workerUrlCustom : t.workerUrlOfficial;
     }
@@ -1185,7 +1184,7 @@
       var det = detectLang(UmeboshiAskSettings.load());
       return det.lang + t.punctOpen + langSourceLabel(det.source, t) + t.punctClose;
     }
-    /* クレジット残量のサブ表示は module（OS5a）が itemSub に足す。 */
+    /* The module (OS5a) adds the credit-balance sub display to itemSub. */
     return item.getAttribute("data-sub") || "";
   }
   function langSourceLabel(source, t) {
@@ -1196,13 +1195,13 @@
     if (source === "fallback") return t.srcFallback;
     return source;
   }
-  /* #130 検索語を挟む引用符。1キーに2文字（開き・閉じ）を詰めて持つ。 */
+  /* #130 Quotes wrapping the search term. One key holds 2 chars (open + close). */
   function searchQuotePair(t) {
     var q = t.searchQuote || "";
     return { open: q.charAt(0) || "", close: q.charAt(1) || q };
   }
-  /* #85 ボタン面の文字列と {question} に入る文字列をこの1つに寄せる。 */
-  /* 設定でラベルを書いたらその文字列が優先。空ならUI言語、なければキー。 */
+  /* #85 Button-face string and the {question} string converge on this one. */
+  /* A settings label wins when set. Else the UI language, else the key. */
   function templateLabel(key, s, t) {
     if (!s) { try { s = UmeboshiAskSettings.load(); } catch (e) { s = null; } }
     if (!t) {
@@ -1220,12 +1219,12 @@
     return override || t[key] || t.customName || key;
   }
 
-  /* ---------- S7: 言語反映 ---------- */
+  /* ---------- S7: language apply ---------- */
   function applyLang() {
     var s = UmeboshiAskSettings.load();
     var det = detectLang(s);
     var t = uiText(det.lang);
-    /* #42 Q9: LOCALES集約の配線。静的HTMLは初期表示のまま、動的文面を上書きする。 */
+    /* #42 Q9: LOCALES wiring. Static HTML keeps its first paint; dynamic strings overwrite. */
     each(qsa("#umeboshi-ask-buttons [data-ask]"), function(btn) {
       btn.textContent = templateLabel(btn.getAttribute("data-ask"), s, t);
     });
@@ -1255,15 +1254,15 @@
     });
     var sendHintEl = byId("umeboshi-ask-send-hint");
     if (sendHintEl) sendHintEl.textContent = (s.sendMode === "enter") ? t.sendHintEnter : t.sendHintButton;
-    /* #129 静的日本語（見出し・ラジオ・説明文・状態）もUI言語に追従させる。
-       data-title はドリルインのキーとして凍結。ここは「表示」だけを書き換える。 */
+    /* #129 Static Japanese (headings, radios, notes, states) also follows the UI language.
+       data-title stays frozen as the drill-in key. Only the "display" rewrites here. */
     var stSendmode = byId("umeboshi-ask-title-sendmode");
     if (stSendmode) stSendmode.textContent = t.sendModeTitle;
     var stSendmodeButton = byId("umeboshi-ask-sendmode-button");
     if (stSendmodeButton) stSendmodeButton.textContent = t.sendModeButton;
     var stSendmodeEnter = byId("umeboshi-ask-sendmode-enter");
     if (stSendmodeEnter) stSendmodeEnter.textContent = t.sendModeEnter;
-    /* #256 OS2b 接続先とトークンの表示もUI言語に追従させる。 */
+    /* #256 OS2b endpoint and token display also follow the UI language. */
     var stWorkerUrl = byId("umeboshi-ask-title-workerurl");
     if (stWorkerUrl) stWorkerUrl.textContent = t.workerUrlTitle;
     var stWorkerUrlNote = byId("umeboshi-ask-worker-url-note");
@@ -1294,22 +1293,22 @@
     if (stMigrateExport) stMigrateExport.textContent = t.migrateExport;
     var stMigrateImport = byId("umeboshi-ask-import-btn");
     if (stMigrateImport) stMigrateImport.textContent = t.migrateImport;
-    /* クレジット残量・課金の見出しとラベルは module（OS5a）が applyLang に足す。 */
-    /* #129 隠し再利用の保存ボタン。threadSave を流用して「保存」の日本語をEnglish UI から残さない。 */
+    /* The module (OS5a) adds credit-balance/billing headings and labels to applyLang. */
+    /* #129 Hidden save-button reuse. Borrow threadSave so no Japanese "save" leaks into the English UI. */
     if (saveBtn) saveBtn.textContent = t.threadSave;
-    /* #129 見出しを書き換えたので、開いている詳細画面の見出しだけ追従させる
-       （開いていなければ何もしない。閉じている画面を作る必要は無い）。 */
+    /* #129 Headings just rewrote, so follow only the open detail heading
+       (do nothing when closed; no need to build a closed screen). */
     if (openDesc) reopenDetail();
-    /* #96 AnkiDroid は既定でカード内の入力欄をタップフォーカスできない（IMEが出ない）。
-       カードから設定値を読み戻せないので、AnkiDroid でだけ一行の説明を出す。 */
+    /* #96 AnkiDroid cannot tap-focus in-card inputs by default (no IME).
+       Card-side values are unreadable, so show a one-line note on AnkiDroid only. */
     var droidKbHint = byId("umeboshi-ask-ankidroid-kb-hint");
     if (droidKbHint) { droidKbHint.textContent = t.ankiDroidKbHint; droidKbHint.hidden = !isAnkiDroid(); }
-    /* #127 表示中バナーの文言も言語切替に追従させる（hidden は boot 判定が握る）。 */
+    /* #127 Live banner strings also follow language switches (boot verdict owns hidden). */
     var storageBanner = byId("umeboshi-ask-storage-banner");
     if (storageBanner && !storageBanner.hidden) storageBanner.textContent = t.storageReset;
     var settingsBtn = byId("umeboshi-ask-settings-btn");
     if (settingsBtn) { setIconText(settingsBtn, t.iconSettings, ""); settingsBtn.title = t.settingsTitle; settingsBtn.setAttribute("aria-label", t.settingsTitle); }
-    /* #250 Copy URL popup の文面。既定はログイン側。開いているときはその kind で引き直す。 */
+    /* #250 Copy-URL popup strings. Default is the login side; redraw by kind while open. */
     var urlCloseEl = byId("umeboshi-ask-url-close");
     if (urlCloseEl) urlCloseEl.setAttribute("aria-label", t.modelClose);
     if (!refreshUrlPopupStrings()) applyUrlPopupStrings("login", "");
@@ -1325,10 +1324,10 @@
     if (effortTitle) effortTitle.textContent = t.effortLabel;
     var effortClose = byId("umeboshi-ask-effort-close");
     if (effortClose) effortClose.setAttribute("aria-label", t.effortClose);
-    /* #198 Effort 一覧の「モデル選択に戻る」。 */
+    /* #198 Effort list "back to model select". */
     var effortBack = byId("umeboshi-ask-effort-back");
     if (effortBack) effortBack.setAttribute("aria-label", t.effortBack);
-    /* #198 4段階の題名・閉じる・詳細入口。級名は行を作り直すため renderTierList 側。 */
+    /* #198 4-tier title/close/detail entry. Tier names redraw rows, so renderTierList owns them. */
     var tierTitle = byId("umeboshi-ask-tier-sheet-title");
     if (tierTitle) tierTitle.textContent = t.tierTitle;
     var tierSheet = byId("umeboshi-ask-tier-sheet");
@@ -1339,7 +1338,7 @@
     if (tierClose) tierClose.setAttribute("aria-label", t.modelClose);
     var tierDetail = byId("umeboshi-ask-tier-detail-btn");
     if (tierDetail) tierDetail.textContent = t.tierDetail;
-    /* #198 モデル一覧の「4段階に戻る」。 */
+    /* #198 Model list "back to 4-tier". */
     var modelBack = byId("umeboshi-ask-model-back");
     if (modelBack) modelBack.setAttribute("aria-label", t.modelBack);
     try {
@@ -1348,7 +1347,7 @@
       if (effortPopup && !effortPopup.hidden && effortTargetId !== "") openEffortPopup(effortTargetId);
       var effortBackEl = byId("umeboshi-ask-effort-back");
       if (effortBackEl) effortBackEl.setAttribute("aria-label", txNow().effortBack);
-      /* #198 4段階も言語切替で描き直す。級名は LOCALES 側なので開き直すが必要。 */
+      /* #198 Redraw the 4-tier too on language switch. Tier names live in LOCALES, so reopen is required. */
       if (tierPopup && !tierPopup.hidden) openTierPopup();
     } catch (eEffort) {}
     var threadTitle = byId("umeboshi-ask-thread-title");
@@ -1366,7 +1365,7 @@
     }
   }
 
-  /* ---------- S7: 質問ボタン描画（既定5＋カスタム無制限） ---------- */
+  /* ---------- S7: question-button paint (5 defaults + unlimited custom) ---------- */
   function renderAskButtons() {
     var s = UmeboshiAskSettings.load();
     var box = byId("umeboshi-ask-buttons");
@@ -1379,13 +1378,13 @@
       b.type = "button";
       b.setAttribute("data-ask-custom", c.id);
       b.textContent = c.label || txNow().customName;
-      /* #25 単一ゲート: 実送信は questions 委譲に一本化。ここに直接配線しない。 */
+      /* #25 Single gate: real send converges on the questions delegate. Never wire directly here. */
       box.appendChild(b);
     });
     applyLang();
   }
 
-  /* ---------- S7: 送信モード → エディタ動作に反映 ---------- */
+  /* ---------- S7: send mode -> editor behavior ---------- */
   function applySendMode() {
     var s = UmeboshiAskSettings.load();
     each(qsa('input[name="umeboshi-ask-sendmode"]'), function(r) {
@@ -1417,7 +1416,7 @@
     }
   }
 
-  /* ---------- S7: プロンプト編集UI（各エディタが1項目 data-title付き） ---------- */
+  /* ---------- S7: prompt edit UI (each editor is one item with data-title) ---------- */
   function defaultKeyName(k, t) { return t[k] || k; }
   function searchHay(kind, label, body) {
     return "プロンプト prompt " + kind + " " + (label || "") + " " + (body || "");
@@ -1562,7 +1561,7 @@
     }
   }
 
-  /* ---------- S7: タブ（フォルダ型）＋ドリルインナビ ---------- */
+  /* ---------- S7: tabs (folder style) + drill-in nav ---------- */
   function panelEl(name) {
     var panels = qsa("#umeboshi-ask-settings-body .umeboshi-ask-panel");
     for (var i = 0; i < panels.length; i++) {
@@ -1575,7 +1574,7 @@
     while (p && !(p.getAttribute && p.getAttribute("data-panel"))) p = p.parentNode;
     return p ? p.getAttribute("data-panel") : null;
   }
-  /* 項目の安定キー: openDesc保持・reopenDetail復元・カスタム削除判定に使う。data-key / data-custom が無い静的項目は data-title をキーにする（重複なし想定）。 */
+  /* Stable item key: for openDesc hold, reopenDetail restore, custom-delete checks. Static items without data-key / data-custom use data-title as the key (assumed unique). */
   function itemKey(item) {
     try {
       if (!item || !item.getAttribute) return "";
@@ -1588,8 +1587,8 @@
     } catch (e) {}
     return "";
   }
-  /* #129 表示はUI言語に追従させるので、見出し要素 → <b> → data-title の順に読む。
-     data-title は itemKey() のキー（ドリルイン復元）として日本語のまま凍結した。 */
+  /* #129 Display follows the UI language, so read heading el -> <b> -> data-title in order.
+     data-title stays frozen in Japanese as the itemKey() key (drill-in restore). */
   function itemTitle(item) {
     try {
       if (!item || !item.getAttribute) return txNow().itemFallback;
@@ -1619,7 +1618,7 @@
     if (name === "prompts") return x.tabPrompts;
     if (name === "lang") return x.tabLang;
     if (name === "account") return x.tabAccount;
-    /* "credit" は module（OS5a）が tabNameLocal に足す。 */
+    /* The module (OS5a) adds "credit" to tabNameLocal. */
     return name;
   }
 
@@ -1673,7 +1672,7 @@
       tab.setAttribute("aria-selected", on ? "true" : "false");
     });
   }
-  // タブ一覧表示（項目行モード）
+  // Tab list view (item-row mode)
   function showTabs() {
     openDesc = null;
     detailbar.hidden = true;
@@ -1701,7 +1700,7 @@
     if (searchHint) searchHint.textContent = "";
     showTabs();
   }
-  // 項目詳細表示（Android式ドリルイン）
+  // Item detail view (Android-style drill-in)
   function openDetail(item, from) {
     var panel = panelNameOf(item) ? panelEl(panelNameOf(item)) : null;
     if (!panel) return;
@@ -1752,7 +1751,7 @@
     openDetail(item, detailFrom);
   }
 
-  /* ---------- S7: 検索 → 結果リスト表示（タップで項目へ） ---------- */
+  /* ---------- S7: search -> result list (tap jumps to item) ---------- */
   function collectMatches(q) {
     var out = [];
     each(qsa("#umeboshi-ask-settings-body .umeboshi-ask-item"), function(item) {
@@ -1846,9 +1845,9 @@
     setTab("prompts");
   }
 
-  /* ---------- #256 OS2b: 接続先Workerとアクセストークン（自己ホスト導線） ---------- */
-  /* URL は http/https の形だけ受け、壊れた値は空（既定に戻す）と見なす。
-     トークンは前後空白を落とした形で保存する（中身の検証はWorker側が行う）。 */
+  /* ---------- #256 OS2b: endpoint Worker and access token (self-host flow) ---------- */
+  /* Accept http/https-shaped URLs only; treat broken values as empty (back to default).
+     Store the token trimmed (the Worker validates its content). */
   function normalizeWorkerUrl(raw) {
     var s = typeof raw === "string" ? trim(raw) : "";
     if (!s) return "";
@@ -1860,32 +1859,32 @@
   function readWorkerToken() {
     try { return trim(storeGet(WORKER_TOKEN_KEY) || ""); } catch (e) { return ""; }
   }
-  /* 接続先の解決順: 設定の Worker URL > root.UMEBOSHI_ASK_API_BASE（外部フック）
-     > 既定の公式 URL（導線維持）。#258 OS2c が全通信の読みをこの順へ寄せる。 */
+  /* Endpoint resolution: settings Worker URL > root.UMEBOSHI_ASK_API_BASE (external hook)
+     > official default URL (keeps the flow). #258 OS2c points all traffic reads at this order. */
   function currentApiBase() {
     var set = readWorkerUrl();
     if (set) return set;
     try { if (root && typeof root.UMEBOSHI_ASK_API_BASE === "string" && root.UMEBOSHI_ASK_API_BASE) return root.UMEBOSHI_ASK_API_BASE; } catch (e) {}
     return DEFAULT_API_BASE;
   }
-  /* Authorization の優先順位（#258 OS2c で統一）: 設定のアクセストークンが */
-  /* あればそれを Bearer に使い、無ければログインのアクセストークン。 */
-  /* 設定が空のときは挙動を変えない。login の token は module の閉包が持ち、 */
-  /* base は typeof ガードで読口だけを拾う（OS5c #265）。 */
+  /* Authorization priority (unified in #258 OS2c): the settings access token */
+  /* wins as Bearer when set, else the login access token. */
+  /* Empty settings change nothing. The module closure owns the login token, and */
+  /* base picks up only the read hook behind a typeof guard (OS5c #265). */
   function bearerToken() {
     try { var set = readWorkerToken(); if (set) return set; } catch (e) {}
     try { if (typeof UmeboshiAskAuthGetToken === "function") { var t = UmeboshiAskAuthGetToken(); if (t) return t; } } catch (e2) {}
     return "";
   }
-  /* 保存時の値を入力欄へ戻す。空欄は既定に戻った状態なので空のまま見せる。 */
+  /* Echo saved values back into the inputs. Blank means back-to-default, so show empty. */
   function loadConnectionInputs() {
     var urlEl = byId("umeboshi-ask-worker-url");
     if (urlEl) urlEl.value = readWorkerUrl();
     var tokenEl = byId("umeboshi-ask-worker-token");
     if (tokenEl) tokenEl.value = readWorkerToken();
   }
-  /* 保存は change（フォーカスが外れる確定）で行う。壊れた URL は空＝既定に戻し、
-     入力を既定値で埋め直して知らせる。トークンは前後空白を落として保存する。 */
+  /* Save on change (blur commit). A broken URL resets to empty = default,
+     refill the input with the default and notify. Trim the token before saving. */
   function wireConnectionInputs() {
     var urlEl = byId("umeboshi-ask-worker-url");
     if (urlEl) {
@@ -1898,7 +1897,7 @@
           urlEl.value = v;
           if (note) note.textContent = "";
         } else {
-          /* 空欄は既定に戻すだけ。壊れた値が入っていたときだけ知らせる。 */
+          /* Blank only returns to default. Notify only when a broken value was in place. */
           storeDel(WORKER_URL_KEY);
           urlEl.value = "";
           if (note) note.textContent = typed === "" ? "" : txNow().workerUrlInvalid;
@@ -1922,31 +1921,31 @@
       });
     }
   }
-  /* ---------- S10 の残量表示・超過ブロック・402 は module 側（OS5a）。 ----------
-     netFetch は base のまま（モデル一覧・chat・認証が使う）。接続先の解決は
-     #256 OS2b / #258 OS2c の currentApiBase()（設定 > 外部フック > 既定）に寄せ、
-     読み込み時の apiBase 変数は持たない。
-     module は script シームの中で lastUsage・creditBlocked・fetchUsage を宣言し、
-     base の modelBalance() と updateSendEnabled() は typeof ガードで module の
-     有無をそのまま拾う（module が無い base では常に未接続として動く）。 */
+  /* ---------- S10 balance display, over-limit block, and 402 live in the module (OS5a). ----------
+     netFetch stays in base (model list, chat, auth use it). Endpoint resolution goes through
+     #256 OS2b / #258 OS2c currentApiBase() (settings > external hook > default);
+     no load-time apiBase variable.
+     The module declares lastUsage, creditBlocked, fetchUsage inside the script seam, and
+     base modelBalance() and updateSendEnabled() pick the module up or down
+     behind a typeof guard (module-less base always runs as unconnected). */
   function netFetch() { try { if (root && root.fetch) return root.fetch; } catch (e) {} if (typeof fetch !== "undefined") return fetch; return null; }
-  /* ---------- #76: 外部起動ブロック時の手運び導線（URL表示＋コピー） ----------
-     AnkiDroidは初期設定でカードからの外部起動を止める（解除はadvanced settingsのみ。カードJSからは変更不可）。
-     そのため自動起動は試すが、成否をカード側から判定できないのでURLを必ず画面に残し、コピーできるようにする。 */
+  /* ---------- #76: hand-carry flow when external launch is blocked (URL view + copy) ----------
+     AnkiDroid blocks external launch from cards by default (advanced-settings only; card JS cannot change it).
+     So still try auto-launch, but the card cannot tell success; always leave the URL on screen, copyable. */
   function tryOpenExternal(url) {
     try { if (root && typeof root.open === "function") { root.open(url, "_blank", "noopener"); return; } } catch (e) {}
     try { if (typeof window !== "undefined" && typeof window.open === "function") window.open(url, "_blank", "noopener"); } catch (e2) {}
   }
-  /* #250 Desktop のコピーはコンパニオン add-on の Python 橋で OS クリップボードへ書く。
-     QtWebEngine は navigator.clipboard.writeText を permission 要求に通すが、
-     Anki はその要求に答えない（aqt/webview.py に permission handler が無い。
-     実測: QtWebEngine 6.11.2 / Chromium 140、http://127.0.0.1 配信・focus 済みページで
-     writeText() の Promise は沈黙したまま settled せず、document.execCommand("copy") は false。
-     つまり Web 側 API だけでは Desktop ではコピーできない。 */
-  /* ブリッジが true を返したら成功。null/false（add-on 未同梱の既定handler）は
-     Web 側経路に続けてよいことを意味する。応答が来ない場合も Web 側経路に続ける:
-     pycmd を持つが答えない環境（未知のモバイルシム等。AnkiDroid には pycmd 自体が
-     無いことを実測済み、AnkiMobile は確かめられない）でボタンが無音に戻るのを防ぐ。 */
+  /* #250 Desktop copy goes through the companion add-on Python bridge to the OS clipboard.
+     QtWebEngine routes navigator.clipboard.writeText through a permission request,
+     but Anki never answers it (no permission handler in aqt/webview.py.
+     Measured: QtWebEngine 6.11.2 / Chromium 140, served at http://127.0.0.1 on a focused page:
+     writeText() Promise stays silent unsettled; document.execCommand("copy") is false.
+     So Web-side APIs alone cannot copy on Desktop. */
+  /* Bridge true means success. null/false (default handler without the add-on) means
+     the Web-side path may continue. Continue on the Web path even with no answer:
+     on envs that have pycmd but stay silent (unknown mobile shims; AnkiDroid has no pycmd at all
+     measured, AnkiMobile unverifiable) this keeps the button from going silent. */
   function copyViaBridge(text, done) {
     var send;
     try {
@@ -1969,8 +1968,8 @@
     }
     return true;
   }
-  /* 同期の execCommand を先に試す。クリックと同じタスクなので user activation が残っており、
-     非同期 API が permission 待ちで沈黙する環境（#250）でもここで決着する。 */
+  /* Try sync execCommand first. Same task as the click keeps user activation, so envs where the
+     async API stalls on permission (#250) still settle here. */
   function copyViaExecCommand(text) {
     var ok = false;
     try {
@@ -1986,9 +1985,9 @@
     } catch (e) { ok = false; }
     return ok;
   }
-  /* 非同期 clipboard API（ブラウザー・AnkiDroid の WebView 用）。
-     permission 待ちで Promise が沈黙し続ける環境があるので（#250 実測）、
-     待ちには上限を付ける。黙ったままのボタンを出さないため。 */
+  /* Async clipboard API (for browsers and the AnkiDroid WebView).
+     Some envs stall the Promise on permission forever (#250 measured), so
+     cap the wait. Never leave a silent button. */
   var CLIPBOARD_WAIT_MS = 600;
   function copyViaClipboardApi(text, finish) {
     var settled = false;
@@ -2017,7 +2016,7 @@
   function copyToClipboard(text, done) {
     var settled = false;
     function finish(ok) { if (settled) return; settled = true; done(ok); }
-    /* 1) Desktop: pycmd ブリッジ（Web の permission を介さず OS クリップボードへ直書き）。 */
+    /* 1) Desktop: pycmd bridge (writes to the OS clipboard without Web permission). */
     if (copyViaBridge(text, function (ok) {
       if (ok) { finish(true); return; }
       copyViaWebApis(text, finish);
@@ -2025,18 +2024,18 @@
     copyViaWebApis(text, finish);
   }
   function copyViaWebApis(text, finish) {
-    /* 2) 同期 execCommand。成功すれば非同期 API は触らない。 */
+    /* 2) Sync execCommand. On success never touch the async API. */
     if (copyViaExecCommand(text)) { finish(true); return; }
-    /* 3) 非同期 clipboard API。 */
+    /* 3) Async clipboard API. */
     copyViaClipboardApi(text, finish);
   }
-  /* ---------- #250 Copy URL の手運び popup（モデルpopupと同じ作り） ----------
-     AnkiDroidは初期設定でカードからの外部起動を止める（解除はadvanced settingsのみ。カードJSからは変更不可）。
-     そのため自動起動は試むが、成否をカード側から判定できないのでURLを必ず popup に残し、コピーできるようにする。
-     kind は "login"。module（OS5a）は "billing" の枝を足す。文面は押下時点の表示言語から引く。 */
+  /* ---------- #250 Copy-URL hand-carry popup (same build as the model popup) ----------
+     AnkiDroid blocks external launch from cards by default (advanced-settings only; card JS cannot change it).
+     So still try auto-launch, but the card cannot tell success; always leave the URL in the popup, copyable.
+     kind is "login". The module (OS5a) adds the "billing" branch. Strings resolve from the display language at tap. */
   var lastUrlKind = "";
   function urlPopupStrings(kind) {
-    /* kind "billing" の文面は module（OS5a）が urlPopupStrings に足す。 */
+    /* The module (OS5a) adds the kind "billing" strings to urlPopupStrings. */
     var t = txNow();
     return {
       title: t.loginUrlAria, note: t.loginFallbackNote,
@@ -2044,8 +2043,8 @@
       copied: t.loginCopied, fail: t.loginCopyFail,
     };
   }
-  /* 開いている popup の文面を現在の言語で引き直す（applyLang から呼ぶ）。
-     開いていたときだけ true。閉じている間は入力値を触らない（既定文面は呼び側が敷く）。 */
+  /* Redraw the open popup strings in the current language (called from applyLang).
+     True only while open. Never touch inputs while closed (the caller lays the default strings). */
   function refreshUrlPopupStrings() {
     var popup = byId("umeboshi-ask-url-popup");
     if (!popup || popup.hidden || !lastUrlKind) return false;
@@ -2077,14 +2076,14 @@
   function closeUrlPopup() {
     var popup = byId("umeboshi-ask-url-popup");
     if (popup && !popup.hidden) popup.hidden = true;
-    /* 課金URLは15分・1回限りの使い捨て。閉じたら欄を空にする（古いURLを残さない）。 */
+    /* Billing URLs are single-use, 15-minute throwaways. Clear the field on close (never keep a stale URL). */
     var input = byId("umeboshi-ask-url-input");
     if (input) input.value = "";
     var st = byId("umeboshi-ask-url-copy-status");
     if (st) st.textContent = "";
     lastUrlKind = "";
   }
-  /* popup 内のコピーボタン。貼る文面は押した時点の表示言語と kind から引く。 */
+  /* In-popup copy button. Pasted strings resolve from the display language and kind at tap. */
   function wireUrlCopyButton() {
     var btn = byId("umeboshi-ask-url-copy");
     if (!btn) return;
@@ -2098,12 +2097,12 @@
       copyToClipboard(url, function(ok) { if (st) st.textContent = ok ? s.copied : s.fail; });
     });
   }
-  /* 残高切れの誘導文・リンク・copy／残量表示・請求管理・402 は module 側（OS5a）。
-     base にはシームだけを残す。fetchUsage はmodule が宣言するので openSettings 側は
-     typeof で呼ぶ。 */
-  /* ---------- 匿名ゲート。ログインが要る入口は匿名には出さない ---------- */
-  /* base は loggedInState の置き場だけを持つ。表示の切替は module が包んで足す。 */
-  /* module が無い base では export/import は隠したまま・hint は出したままになる。 */
+  /* Out-of-balance guidance copy/links, balance display, billing management, and 402 live in the module (OS5a).
+     Base keeps only the seams. The module declares fetchUsage, so the openSettings side calls it
+     behind typeof. */
+  /* ---------- Anonymous gate (#160). Never show login-gated entries to anonymous users ---------- */
+  /* Base owns only the loggedInState slot. The module wraps it to add display switching. */
+  /* Module-less base keeps export/import hidden and the hint shown. */
   var loggedInState = false;
   function refreshLoginGatedUI() {}
   function syncAccountStatus() {
@@ -2111,20 +2110,20 @@
   }
   function openSettings() {
     settingsModal.hidden = false;
-    /* #76 課金URLは15分・1回限りの使い捨て。モーダルを開き直したら古いURLを見せない。 */
+    /* #76 Billing URLs are single-use, 15-minute throwaways. Reopening the modal never shows a stale URL. */
     closeUrlPopup();
     syncAccountStatus();
     setTab(currentTab || "general");
     buildAllMenus();
-    /* #256 OS2b: 接続先とトークンは保存時の値を入力欄へ戻す（既定表示はしない）。 */
+    /* #256 OS2b: echo saved endpoint and token back into the inputs (never show a default). */
     loadConnectionInputs();
-    /* 残量の取得は module（OS5a）。module が無い base では何もしない。 */
+    /* Balance fetch belongs to the module (OS5a). Module-less base does nothing. */
     if (typeof fetchUsage === "function") fetchUsage();
   }
   function closeSettings() { settingsModal.hidden = true; }
-  /* ---------- S5 の土台: Refresh の置き場と素通しの authFetch ---------- */
-  /* login の実体（redeem・refresh・状態表示）は module が持つ（OS5c #265）。 */
-  /* base は bearer 解決と needLogin の口だけを残し、401 の救済は試さない。 */
+  /* ---------- S5 footing: refresh slot and pass-through authFetch ---------- */
+  /* The module owns the login body (redeem, refresh, status display) (OS5c #265). */
+  /* Base keeps only bearer resolution and the needLogin hook; never attempts 401 rescue. */
   var REFRESH_KEY = "umeboshi-ask:refresh:v1";
   function isAnkiDroid() { try { if (root && root.AnkiDroidJS) return true; } catch (e) {} try { if (/Android/i.test((root.navigator && root.navigator.userAgent) || "")) return true; } catch (e2) {} return false; }
   function authHttp() { return netFetch(); }
@@ -2146,11 +2145,11 @@
     getAccessToken: function() { return ""; },
     refreshNow: function() { return Promise.resolve(false); }
   };
-  /* 401 の受け口: module が handleExpired を包んで refresh 破棄を足す。 */
-  /* base 単体では何もしない（OS2c: 自己ホストでは refresh を試さない）。 */
+  /* 401 hook: the module wraps handleExpired to add refresh discard. */
+  /* Standalone base does nothing (OS2c: never refresh on self-host). */
   function handleExpired() { return false; }
-  /* ---------- S12: 設定export/import（別端末移行・Bearer必須・匿名はボタン非表示） ---------- */
-  /* 設定移行の文面は module が持つ。base は読口だけを用意する。 */
+  /* ---------- S12: settings export/import (cross-device move; Bearer required; anonymous hides the buttons) ---------- */
+  /* The module owns the migration strings. Base prepares only the read hook. */
   function migrateBusyExportText() { return txNow().migrateBusyExport; }
   function migrateDoneExportText() { return txNow().migrateDoneExport; }
   function migrateExpiredText() { return txNow().migrateExpired; }
@@ -2223,13 +2222,13 @@
   }
 
 
-  /* ---------- S6: Thread保存（Message単位1件ずつ・titleなし・thinking保存なし） ----------
-     保存済みMessageはLLMに送らない（chat payloadは{question}のみ。ADR 0006）。
-     IndexedDBに即時保存し、ログイン中はKVにも保存（次回同カード表示でThread再表示）。
-     中断時は自動保存せず、未保存Messageとして残し保存ボタンを表示する。
-     上限は1 Thread 100 Message・1 Message 20000文字（question+answer合算）・index 50件（鯖側）。
-     匿名の保存押下はログイン案内。CardID未対応は赤バナー＋保存ブロック（S1互換）。
-     削除は復元なし・物理削除即時（確認のみ）。 */
+  /* ---------- S6: thread save (one Message at a time, no title, no thinking saved) ----------
+     Saved Messages never go to the LLM (chat payload is {question} only. ADR 0006).
+     Save to IndexedDB at once; also to KV while logged in (thread redraws on next view of the card).
+     On abort never autosave; keep an unsaved Message and show its save button.
+     Caps: 100 Messages per thread, 20000 chars per Message (question+answer), 50 index entries (server side).
+     Anonymous save taps get the login guide. CardID-less envs get the red banner + save block (S1 compat).
+     Delete is unrecoverable physical delete at once (confirm only). */
   var THREAD_MSG_MAX = 100;
   var THREAD_MSG_CHARS = 20000;
   var IDB_NAME = "umeboshi-ask";
@@ -2243,7 +2242,7 @@
     if (typeof id !== "string") return false;
     var t = trim(id);
     if (t === "" || t.length > 128) return false;
-    // 注: Ankiはテンプレ内の二重波括弧をフィールド参照と解釈するため、JS内にそのリテラルは書けない。以下は unicode escape で回避する。
+    // Note: Anki reads double braces in templates as field refs, so that literal cannot appear in JS. Unicode escapes dodge it below.
     if (t.indexOf("\u007b\u007b") !== -1 || t.indexOf("\u007d\u007d") !== -1) return false;
     return true;
   }
@@ -2256,7 +2255,7 @@
   function threadStatusEl() { return byId("umeboshi-ask-thread-status"); }
   function setThreadStatus(t) { var el = threadStatusEl(); if (el) el.textContent = t || ""; }
   var savedMessages = [];
-  /* ---------- IndexedDB（不可時はメモリフォールバック） ---------- */
+  /* ---------- IndexedDB (memory fallback when unavailable) ---------- */
   function idbSupported() {
     try { return typeof indexedDB !== "undefined" && !!indexedDB.open; } catch (e) { return false; }
   }
@@ -2306,7 +2305,7 @@
       });
     });
   }
-  /* ---------- KV（Bearer必須。匿名は呼ばない） ---------- */
+  /* ---------- KV (Bearer required. Never called anonymous) ---------- */
   function kvPath(cardId) { return "/api/ask/threads/" + encodeURIComponent(cardId); }
   function kvLoad(cardId) {
     return authFetch(kvPath(cardId), { headers: { "x-card-id": cardId } }).then(function(res) {
@@ -2348,11 +2347,11 @@
       return res.json().catch(function() { return {}; });
     });
   }
-  /* ---------- #32 Thread折りたたみ（Message単位。初期は畳み・記憶なし） ---------- */
-  /* 畳み行はMessage題名、なければ質問文先頭50字＋更新時刻で代用する。 */
-  /* S6保存形式は変えない（title欄の追加は#28 Phase 2）。 */
+  /* ---------- #32 thread folding (per Message. Starts folded, remembers nothing) ---------- */
+  /* A folded row shows the Message title, else the question head (50 chars) + updated time. */
+  /* S6 save shape stays (adding a title field is #28 phase 2). */
   var THREAD_TITLE_HEAD = 50;
-  /* #131 空質問の文言と更新時刻の括弧はUI言語に追従させる（括弧は#130の punctOpen/punctClose）。 */
+  /* #131 Empty-question wording and timestamp parens follow the UI language (parens are #130 punctOpen/punctClose). */
   function threadHeadText(m) {
     var t = m && typeof m.title === "string" ? trim(m.title) : "";
     if (t !== "") return t.slice(0, THREAD_TITLE_HEAD);
@@ -2364,7 +2363,7 @@
   }
   root.UmeboshiAskThreadTitle = { head: threadHeadText, headLen: THREAD_TITLE_HEAD };
 
-  /* ---------- Thread描画（上部再表示・編集・削除） ---------- */
+  /* ---------- Thread paint (top redraw, edit, delete) ---------- */
   function renderThread() {
     var box = threadBox();
     var list = threadList();
@@ -2391,7 +2390,7 @@
     head.type = "button";
     head.className = "umeboshi-ask-thread-head";
     head.setAttribute("aria-expanded", "false");
-    /* #131 開いた行の文言も一覧と同じ関数に寄せる（括弧・空質問が英語UIで日本語のまま出るのを防ぐ）。 */
+    /* #131 Open-row wording shares the list function (keeps parens/empty-question from staying Japanese in English UI). */
     function fullHead() {
       var x = txNow();
       var q = m && typeof m.question === "string" ? trim(m.question).replace(/\s+/g, " ") : "";
@@ -2417,7 +2416,7 @@
     row.className = "umeboshi-ask-row";
     var edit = document.createElement("button");
     edit.type = "button";
-    /* #215 アイコンは内蔵SVG（外部フォント・外部参照はしない）。setIconText が icon* 規則を共有する。 */
+    /* #215 Icons are built-in SVG (no external fonts/refs). setIconText shares the icon* rules. */
     setIconText(edit, txNow().iconEdit, txNow().threadEdit);
     edit.addEventListener("click", function() { startThreadEdit(wrap, m); });
     var del = document.createElement("button");
@@ -2525,7 +2524,7 @@
       setThreadStatus(txNow().threadDeleteFail);
     });
   }
-  /* ---------- CurrentChat→保存（1件ずつ。thinkingは送らない） ---------- */
+  /* ---------- CurrentChat -> save (one at a time. thinking never sent) ---------- */
   function saveOneMessage(question, answer, btn) {
     var cardId = threadCardId();
     if (!isCardIdOk(cardId)) {
@@ -2581,7 +2580,7 @@
     var q = document.createElement("div");
     q.className = "umeboshi-ask-msg-q";
     q.textContent = question;
-    /* #87 中断 Message には生成済みの thinking を折りたたんで残す。保存も送信もしない（既存方針）。 */
+    /* #87 Keep made thinking folded in an aborted Message. Never save or send it (standing policy). */
     var th = null;
     if (trim(thinking) !== "") {
       th = document.createElement("details");
@@ -2594,7 +2593,7 @@
       th.appendChild(thSum);
       th.appendChild(thBody);
     }
-    /* #87 本文が空なら枠を作らない。左の線だけの空箱（旧UIの）を作らないため。 */
+    /* #87 No body means no frame. Avoids the old-UI empty box with only a left rule. */
     var a = null;
     if (trim(answer) !== "") {
       a = document.createElement("div");
@@ -2603,7 +2602,7 @@
     }
     var st = document.createElement("div");
     st.className = "umeboshi-ask-msg-status";
-    /* #87 保存できる本文が無いときは「保存ボタンで残せます」と言わない。 */
+    /* #87 With no savable body, never promise "keep it with the save button". */
     st.textContent = interrupted
       ? (a ? txNow().statusInterrupted : txNow().statusAborted)
       : "";
@@ -2622,7 +2621,7 @@
     box.appendChild(wrap);
     if (box.scrollIntoView) { try { wrap.scrollIntoView(false); } catch (e) {} }
   }
-  /* ---------- Thread読込（次回同カード表示で上部に再表示） ---------- */
+  /* ---------- Thread load (redraws on top at next view of the card) ---------- */
   function loadThreadOnOpen() {
     var cardId = threadCardId();
     if (!isCardIdOk(cardId)) { var b = threadBox(); if (b) b.hidden = true; return; }
@@ -2658,13 +2657,13 @@
       setThreadStatus("");
     });
   }
-  /* ---------- #26 streaming描画（随時レンダリング＋done確定。Q2逐次・Q6スロットル） ----------
-     生テキスト蓄積→スロットル描画→done確定の3段。未完成Markdownの跳ねを抑える。
-     MathJax typesetはdone時に限定（毎チャンク走らせない）。 */
+  /* ---------- #26 streaming paint (progressive render + done settle. Q2 serial, Q6 throttle) ----------
+     Three stages: raw-text pile -> throttled paint -> done settle. Calms unfinished-Markdown jumps.
+     MathJax typeset runs at done only (never per chunk). */
   function setAnswerHtml(el, md, withTypeset) {
     if (!el) return;
     el.innerHTML = renderMarkdown(md);
-    /* vm駆動テストのFakeElはinnerHTMLとtextContentが連動しない。空のときだけ生テキストを添える（実機の描画はinnerHTML）。 */
+    /* The vm-driven FakeEl never syncs innerHTML with textContent. Attach raw text only when empty (real paint is innerHTML). */
     try { if (el.textContent === "" && el.children.length === 0) el.textContent = String(md == null ? "" : md); } catch (e) {}
     if (withTypeset) { try { typesetMath(el); } catch (e2) {} }
   }
@@ -2718,7 +2717,7 @@
   }
   function setStreaming(on) {
     streaming = on;
-    /* 旧停止ボタンは廃止。送信ボタンが停止を兼ねる。 */
+    /* The old stop button is gone. The send button doubles as stop. */
     updateSendEnabled();
   }
   function cardNum() {
@@ -2745,8 +2744,8 @@
     } catch (e) {}
     return out.join("\n");
   }
-  /* #85 freeText は送信ボタンだけ true。テンプレ5ボタンは入力欄を無視し、 */
-  /* {question} はそのボタンのラベル（設定上書き→UI言語→キー）で埋める。 */
+  /* #85 freeText is true for the send button only. The 5 template buttons ignore the input,
+  /* and {question} fills from that button label (settings override -> UI language -> key). */
   function composeQuestion(key, freeText) {
     var typed = (freeText && inputEl && inputEl.value) ? trim(inputEl.value) : "";
     var prompt = null;
@@ -2789,8 +2788,8 @@
     } else if (ev.type === "done") {
       if (answerRenderTimer) { try { clearTimeout(answerRenderTimer); } catch (e) {} answerRenderTimer = null; }
       if (answerEl) setAnswerHtml(answerEl, answerRaw, true);
-      /* #172 完了時の消費表示。charged が確定額（整数）。予約/実費のどちらかは Worker が決める。
-         文面は module の i18n。module が無い base では消費表示を出さない。 */
+      /* #172 Spend display at done. charged is the final amount (integer). The Worker decides reserve vs actual.
+         Strings come from module i18n. Module-less base shows no spend. */
       var spent = (typeof ev.charged === "number" && isFinite(ev.charged) && ev.charged > 0 && txNow().statusSpent)
         ? txNow().statusSpent.replace("__N__", String(Math.ceil(ev.charged)))
         : "";
@@ -2817,7 +2816,7 @@
           errSpent = txNow().statusSpent.replace("__N__", String(Math.ceil(ev.charged)));
         }
       } catch (eSpent) {}
-      /* #94: Workerの code を UI言語の文面で見る。cut off と 空回答は別物。 */
+      /* #94: read the Worker code in UI-language strings. Cut-off and empty answer differ. */
       var errText = (ev.code === "truncated")
         ? txNow().statusTruncated
         : (ev.code === "empty_answer"
@@ -2848,9 +2847,9 @@
   function pushCurrentToMessages(interrupted) {
     var q = currentQuestion;
     var a = answerRaw || "";
-    /* #87 thinking は中断した Message にだけ載せる。完了した Message には載せない。 */
+    /* #87 thinking rides only on aborted Messages. Never on done Messages. */
     var th = interrupted ? (currentThinking || "") : "";
-    /* #87 生成が0のまま止められたときは Message を作らず、CurrentChat の中断表示1行に任せる。 */
+    /* #87 Stopped with zero output makes no Message; the one CurrentChat abort line covers it. */
     if (interrupted && trim(a) === "" && trim(th) === "") return;
     if (trim(q) === "" && trim(a) === "") return;
     currentMessageNode(q, a, th, interrupted);
@@ -2886,8 +2885,8 @@
           throw new Error("payment_required");
         });
       }
-      /* #258 OS2c: 設定のアクセストークンが Worker と違うと 401 で黙って落ちる。
-         案内をエリアへ出して、既定 endpoint の汎用失敗文とは別の理由として示す。 */
+      /* #258 OS2c: a settings access token mismatched with the Worker fails silent with 401.
+         Show guidance in the area as a distinct cause from the default-endpoint generic failure. */
       if (res.status === 401 && readWorkerToken()) {
         setStreamStatus(txNow().workerTokenInvalid);
         throw new Error("worker_token_invalid");
@@ -2908,8 +2907,8 @@
             throw new Error("invalid_effort");
           }
           if (parsed && parsed.error) message = parsed.error;
-          /* #88 Workerの502 bodyにはupstreamPreview（秘密を伏せた上流の理由）が入る。
-             捨てると「LLM upstream error」だけになり、原因がカードに届かない。 */
+          /* #88 The Worker 502 body carries upstreamPreview (upstream cause with secrets redacted).
+             Dropping it leaves only "LLM upstream error" and the card never learns the cause. */
           var upPreview = (parsed && typeof parsed.upstreamPreview === "string") ? trim(parsed.upstreamPreview) : "";
           if (upPreview !== "") message = message + " / " + upPreview.slice(0, 240);
           throw new Error(message);
@@ -2943,7 +2942,7 @@
       setStreaming(false);
       refreshSendGates();
       if (!isErr) pushCurrentToMessages(!!wasAbort);
-      // エラー時はstream-status（#umeboshi-ask-current内）の可視化のため隠さない。503等も表示される。
+      // On error never hide: it visualizes stream-status (inside #umeboshi-ask-current). 503s show too.
     });
   }
   (function wireAskButtons() {
@@ -2961,15 +2960,15 @@
     }
     if (sendBtn && sendBtn.addEventListener) {
       sendBtn.addEventListener("click", function() {
-        /* 送信中はこのボタンが停止ボタンになる。 */
+        /* Mid-send this button becomes the stop button. */
         if (typeof streaming !== "undefined" && streaming) {
           if (streamAbort) streamAbort.abort();
           return;
         }
-        /* #25 空入力は送信せず、同意ダイアログも開かない。 */
+        /* #25 Empty input never sends and never opens the consent dialog. */
         var typed = inputEl && inputEl.value ? trim(inputEl.value) : "";
         if (typed === "") { dropPendingAsk(); return; }
-        /* #85 送信ボタンのみ freeText。入力欄の文章を {question} に乗せる。 */
+        /* #85 Send button only is freeText. It loads the input text into {question}. */
         sendThroughGate("what", true);
       });
     }
@@ -2981,7 +2980,7 @@
   };
   loadThreadOnOpen();
 
-  /* ---------- #25 単一ゲート: CardIDバナー ---------- */
+  /* ---------- #25 single gate: CardID banner ---------- */
   refreshSendGates();
 
   var rawCardId = "";
@@ -2995,8 +2994,8 @@
     banner.hidden = true;
   }
 
-  /* ---------- #127 AnkiDroid origin リセット検知（案内のみ。保存も送信も止めない） ---------- */
-  /* Desktop はポートが変わらないので対象外（Q2=a）。既存の add-on 導線に任せる。 */
+  /* ---------- #127 AnkiDroid origin-reset detection (notice only. Never blocks save or send) ---------- */
+  /* Desktop ports never change, so out of scope (Q2=a). Leave to the existing add-on flow. */
   (function checkStorageReset() {
     var el = byId("umeboshi-ask-storage-banner");
     try {
@@ -3009,7 +3008,7 @@
     } catch (e) { if (el) el.hidden = true; }
   })();
 
-  /* ---------- S7配線 ---------- */
+  /* ---------- S7 wiring ---------- */
   renderAskButtons();
   renderPromptEditors();
   applySendMode();
@@ -3057,7 +3056,7 @@
       updateMenuSubs();
     });
   });
-  /* #256 OS2b: 接続先Workerとアクセストークンの保存・検証。 */
+  /* #256 OS2b: save and validate the endpoint Worker and access token. */
   wireConnectionInputs();
   each(qsa('input[name="umeboshi-ask-lang"]'), function(r) {
     r.addEventListener("change", function() {
@@ -3070,7 +3069,7 @@
       buildAllMenus();
       reopenDetail();
       refreshSearch();
-      /* #131 言語を切り替えたら保存済み解説の見出しも描き直す（日本語のまま残さない）。 */
+      /* #131 Redraw saved-explainer headings on language switch (never leave Japanese). */
       renderThread();
     });
   });
@@ -3094,12 +3093,12 @@
     buildAllMenus();
     reopenDetail();
     refreshSearch();
-    /* #131 設定全消去で言語も戻るため、Thread見出しを新しい言語で描き直す。 */
+    /* #131 Full-settings wipe also resets language, so redraw thread headings in the new language. */
     renderThread();
   });
 
-  /* 残量の再取得・請求管理の導線は module（OS5a）が script シームで配線する。 */
-  /* #250 Copy URL popup のコピーボタン・✕・backdrop。ラベルは applyLang で日英に追従する。 */
+  /* The module (OS5a) wires balance refetch and the billing flow via the script seam. */
+  /* #250 Copy-URL popup copy button, close, backdrop. Labels follow ja/en via applyLang. */
   wireUrlCopyButton();
   var urlCloseBtn = byId("umeboshi-ask-url-close");
   if (urlCloseBtn) urlCloseBtn.addEventListener("click", function() { closeUrlPopup(); });
@@ -3110,37 +3109,37 @@
   var importBtn = byId("umeboshi-ask-import-btn");
   if (importBtn) importBtn.addEventListener("click", importSettings);
   refreshLoginGatedUI();
-  /* ログイン配線は module（OS5c）が持つ。module が無い base では何もしない。 */
+  /* The module (OS5c) owns login wiring. Module-less base does nothing. */
   if (typeof wireLoginBoot === "function") wireLoginBoot();
 
-  /* ---------- S8: モデルpopup（#47 非native・カード常設・安い順＋残量不足は選択不可） ----------
-     一覧は GET /api/ask/models が正（bundle fallback時は全件選択可）。
-     残量はS10のlastUsage.remainingを見る。不明時は全件選択可
-     （markSelectable相当のフロント結線）。選択はbest-effortで永続化し、
-     Desktopのoff-the-recordでは安い選択可モデルに落ち着く。
-     #47: AnkiのWebViewでnative selectのpickerが開かないため、
-     button＋fixed popup（granumorphism）で選ぶ。送信payloadはchatBody.model＋effort。
-     #66: Effortは子popupでそのモデルの取り揃えだけ出す。記憶はumeboshi-ask:effort:v1の辞書。
-     未指定時は各モデルのdefault effort（選択なしは送らない）。自動切替はswitched.effortで表示更新。 */
+  /* ---------- S8: model popup (#47 non-native, always on card, cheapest first, insufficient balance unselectable) ----------
+     The list defers to GET /api/ask/models (all selectable on bundle fallback).
+     Balance reads S10 lastUsage.remaining. All selectable when unknown
+     (front wiring equivalent to markSelectable). Persist selection best-effort;
+     on Desktop off-the-record settle on a cheap selectable model.
+     #47: the native select picker never opens in the Anki WebView, so
+     pick via buttons + fixed popup (granumorphism). Send payload is chatBody.model + effort.
+     #66: Effort child popup lists only that model lineup. Memory is the umeboshi-ask:effort:v1 map.
+     Unset means each model default effort (send nothing when unselected). Auto-switch refreshes via switched.effort. */
   var MODEL_KEY = "umeboshi-ask:model:v1";
   var EFFORT_KEY = "umeboshi-ask:effort:v1";
   var modelSel = byId("umeboshi-ask-model");
   var modelPopup = byId("umeboshi-ask-model-popup");
   var modelList = byId("umeboshi-ask-model-list");
   var modelCloseBtn = byId("umeboshi-ask-model-close");
-  /* #198 モデル一覧から4段階へ戻るボタン（arrow_back）。 */
+  /* #198 Model-list back-to-4-tier button (arrow_back). */
   var modelBackBtn = byId("umeboshi-ask-model-back");
   var modelBackdrop = byId("umeboshi-ask-model-backdrop");
   var effortPopup = byId("umeboshi-ask-effort-popup");
   var effortList = byId("umeboshi-ask-effort-list");
   var effortNote = byId("umeboshi-ask-effort-note");
   var effortCloseBtn = byId("umeboshi-ask-effort-close");
-  /* #198 Effort 一覧からモデル一覧へ戻るボタン（arrow_back）。 */
+  /* #198 Effort-list back-to-model-list button (arrow_back). */
   var effortBackBtn = byId("umeboshi-ask-effort-back");
   var effortBackdrop = byId("umeboshi-ask-effort-backdrop");
   var effortSheetTitle = byId("umeboshi-ask-effort-sheet-title");
-  /* #198 4段階（ModelTier）popup。モデルボタンの受け口になり、詳細モデル選択で
-     モデルpopup（#47）へ渡す。 */
+  /* #198 4-tier (ModelTier) popup. Entry from the model button; the detail-model select hands
+     off to the model popup (#47). */
   var tierPopup = byId("umeboshi-ask-tier-popup");
   var tierList = byId("umeboshi-ask-tier-list");
   var tierSheetTitle = byId("umeboshi-ask-tier-sheet-title");
@@ -3180,15 +3179,15 @@
     var sc = modelScore(m);
     return sc === "" ? "" : "🧠" + sc;
   }
-  /* #198 Effort 別の強さ。Worker の scores は計測できた Effort だけ持つので、
-     欠損は空にして呼び出し側が `—` を出す（推定は作らない）。 */
+  /* #198 Per-Effort strength. Worker scores cover only measured Efforts, so
+     leave gaps empty and let the caller print `--` (never estimate). */
   function effortScoreValue(m, v) {
     var sc = m && m.scores ? m.scores[v] : undefined;
     if (typeof sc !== "number" || !isFinite(sc)) return "";
     return String(Math.round(sc));
   }
-  /* #198 強さの記号をボタンへ足す。値が空のときは `—`（未計測）と読み上げを付ける。
-     モデル一覧と同じ見た目（.umeboshi-ask-model-score）を3面で共有する。 */
+  /* #198 Add the strength badge to buttons. Empty values get `--` (unmeasured) plus a spoken label.
+     Shares the model-list look (.umeboshi-ask-model-score) across all three faces. */
   function appendScoreEl(btn, value) {
     if (!btn) return;
     var t = txNow();
@@ -3219,10 +3218,10 @@
     var s = modelShortName(m);
     var sc = modelScoreText(m);
     if (sc !== "") s += " " + sc;
-    /* #198 目安クレジットは選ぶ画面に出さない（human 決定）。model＋Effort だけ。 */
+    /* #198 Keep credit estimates off the picker (human decides). model + Effort only. */
     var eff = m ? selectedEffortFor(m.id) : "";
     if (eff !== "" && m && modelEfforts(m).length > 0) s += t.punctOpen + effortDisplayName(eff) + t.punctClose;
-    /* 残量不足の添え字は module の i18n。module が無い base では何も足さない。 */
+    /* Insufficient-balance footnote comes from module i18n. Module-less base adds nothing. */
     if (!selectable && t.modelNoBalance) s += t.modelNoBalance;
     return s;
   }
@@ -3334,8 +3333,8 @@
         b.setAttribute("data-model-id", m.id);
         b.setAttribute("aria-checked", (m.id === want && sel) ? "true" : "false");
         if (!sel) b.setAttribute("disabled", "disabled");
-        /* #198 4級に入るモデルはその級名、入らなければ Custom。級は選び中の
-           (modelId, effort) で決めるので、Effort を変えると行の級も追従する。 */
+        /* #198 A model inside the 4 tiers takes that tier name, else Custom. The tier follows the selected
+           (modelId, effort), so changing Effort moves the row tier too. */
         var tNow = txNow();
         var rowTier = tierOfModel(m);
         appendTierLabel(b, rowTier, modelShortName(m), tNow);
@@ -3403,9 +3402,9 @@
       list = list.filter(function(v) { return v !== "none"; });
     }
     effortTargetId = modelId;
-    /* #82 B2: 一覧の renderModelList は modelShortName() で供給元の名前を落として
-       「GLM 5.3 Flash」にするのに、題名だけは m.name をそのまま使っていたため
-       「Z.ai: GLM 5.3 Flash — Effort」になっていた。題名も同じ関数を通す。 */
+    /* #82 B2: list renderModelList strips the vendor name via modelShortName() into
+       "GLM 5.3 Flash", but the title alone used raw m.name, so it read
+       "Z.ai: GLM 5.3 Flash -- Effort". Run the title through the same function. */
     if (effortSheetTitle) effortSheetTitle.textContent = modelShortName(m) + " — " + txNow().effortLabel;
     if (effortNote) effortNote.textContent = txNow().effortNote;
     while (effortList.firstChild) effortList.removeChild(effortList.firstChild);
@@ -3418,7 +3417,7 @@
         b.setAttribute("data-effort", v);
         b.setAttribute("aria-checked", v === current ? "true" : "false");
         b.textContent = effortDisplayName(v) + (v === current ? " ✓" : "");
-        /* #198 Effort 別の強さを行の右に付ける。未計測は `—`。 */
+        /* #198 Per-Effort strength goes right on the row. Unmeasured is `--`. */
         appendScoreEl(b, effortScoreValue(m, v));
         b.addEventListener("click", function() {
           setEffortFor(modelId, v);
@@ -3443,18 +3442,18 @@
       try { modelSel.focus(); } catch (e) {}
     }
   }
-  /* ---------- #198 4段階（ModelTier）選択 ----------
-     Worker の presets が正。各段は (modelId, effort) の1組で、押すと model＋effort の
-     2鍵を書く（段 index は保存しない。選んだ段は2鍵から逆算する）。
-     一覧に無い段は出さない。残量不足は押せず理由を1行出す（自動すり替えはしない）。 */
-  /* #198 級のアイコン（Material Symbols Outlined）。実体は inline SVG の path で、
-     外部フォントは読まない（カードはオフラインでも動く）。school/family_star/diamond/crown。 */
+  /* ---------- #198 4-tier (ModelTier) select ----------
+     Worker presets are authoritative. Each tier is one (modelId, effort) pair; a tap writes the
+     model + effort keys (never store the tier index; derive the picked tier back from the 2 keys).
+     Hide tiers missing from the list. Insufficient balance disables with a one-line reason (never auto-swap). */
+  /* #198 Tier icons (Material Symbols Outlined). Built as inline SVG paths;
+     no external fonts (cards work offline). school/family_star/diamond/crown. */
   var TIER_ICON_PATHS = {
     basic: "M480-120 200-272v-240L40-600l440-240 440 240v320h-80v-276l-80 44v240L480-120Zm0-332 274-148-274-148-274 148 274 148Zm0 241 200-108v-151L480-360 280-470v151l200 108Zm0-241Zm0 90Zm0 0Z",
     middle: "M565.5-348.5Q603-377 620-422H340q17 45 54.5 73.5T480-320q48 0 85.5-28.5Zm-143-149Q440-515 440-540t-17.5-42.5Q405-600 380-600t-42.5 17.5Q320-565 320-540t17.5 42.5Q355-480 380-480t42.5-17.5Zm200 0Q640-515 640-540t-17.5-42.5Q605-600 580-600t-42.5 17.5Q520-565 520-540t17.5 42.5Q555-480 580-480t42.5-17.5ZM305-704l112-145q12-16 28.5-23.5T480-880q18 0 34.5 7.5T543-849l112 145 170 57q26 8 41 29.5t15 47.5q0 12-3.5 24T866-523L756-367l4 164q1 35-23 59t-56 24q-2 0-22-3l-179-50-179 50q-5 2-11 2.5t-11 .5q-32 0-56-24t-23-59l4-165L95-523q-8-11-11.5-23T80-570q0-25 14.5-46.5T135-647l170-57Zm49 69-194 64 124 179-4 191 200-55 200 56-4-192 124-177-194-66-126-165-126 165Zm126 135Z",
     premium: "M480-120 80-600l120-240h560l120 240-400 480Zm-95-520h190l-60-120h-70l-60 120Zm55 347v-267H218l222 267Zm80 0 222-267H520v267Zm144-347h106l-60-120H604l60 120Zm-474 0h106l60-120H250l-60 120Z",
     ultra: "M200-160v-80h560v80H200Zm0-140-51-321q-2 0-4.5.5t-4.5.5q-25 0-42.5-17.5T80-680q0-25 17.5-42.5T140-740q25 0 42.5 17.5T200-680q0 7-1.5 13t-3.5 11l125 56 125-171q-11-8-18-21t-7-28q0-25 17.5-42.5T480-880q25 0 42.5 17.5T540-820q0 15-7 28t-18 21l125 171 125-56q-2-5-3.5-11t-1.5-13q0-25 17.5-42.5T820-740q25 0 42.5 17.5T880-680q0 25-17.5 42.5T820-620q-2 0-4.5-.5t-4.5-.5l-51 321H200Zm68-80h424l26-167-105 46-133-183-133 183-105-46 26 167Zm212 0Z",
-    /* #198 4級のどれにも入らないモデル用（tune）。 */
+    /* #198 For models in none of the 4 tiers (tune). */
     custom: "M440-120v-240h80v80h320v80H520v80h-80Zm-320-80v-80h240v80H120Zm160-160v-80H120v-80h160v-80h80v240h-80Zm160-80v-80h400v80H440Zm160-160v-240h80v80h160v80H680v80h-80Zm-480-80v-80h400v80H120Z"
   };
   var TIER_LABEL_KEYS = { basic: "tierBasic", middle: "tierMiddle", premium: "tierPremium", ultra: "tierUltra" };
@@ -3467,14 +3466,14 @@
   function presetEffortOf(p) {
     return (p && typeof p.effort === "string" && p.effort !== "") ? p.effort : "";
   }
-  /* #198 行のモデル側。「(Model: effort)」。選択なしモデルは effort を書かない。 */
+  /* #198 Model side of a row. "(Model: effort)". Models without a select print no effort. */
   function tierModelText(p, m) {
     var s = "(" + modelShortName(m);
     var eff = presetEffortOf(p);
     if (eff !== "") s += ": " + eff;
     return s + ")";
   }
-  /* その段がいま選ばれているか。model が一致し、effort は選択中の値と比べる。 */
+  /* Whether that tier is now picked. model matches and effort compares against the selected value. */
   function presetIsCurrent(p) {
     if (!p || typeof p.modelId !== "string" || p.modelId === "") return false;
     var mid = selectedModelId();
@@ -3483,9 +3482,9 @@
     if (!m) return false;
     return (modelEfforts(m).length > 0 ? selectedEffortFor(mid) : "") === presetEffortOf(p);
   }
-  /* #198 モデル一覧の行に付ける級。(modelId, 選び中の effort) が presets の
-     どれかに一致すればその級、どれでもなければ Custom（tune アイコン）。
-     Opus は premium(high) と ultra(max) の2級に入るので、選び中の effort で決める。 */
+  /* #198 Tier pinned on a model-list row. When (modelId, selected effort) hits a presets
+     entry it takes that tier, else Custom (tune icon).
+     Opus sits in two tiers, premium(high) and ultra(max), so the selected effort decides. */
   function tierOfModel(m) {
     if (!m) return null;
     var eff = modelEfforts(m).length > 0 ? selectedEffortFor(m.id) : "";
@@ -3495,7 +3494,7 @@
     }
     return null;
   }
-  /* 級の見出し（アイコン＋級名）。Custom は tierCustom を出す。 */
+  /* Tier heading (icon + tier name). Custom prints tierCustom. */
   function tierIconSvg(name) {
     return '<svg class="umeboshi-ask-tier-icon-svg" viewBox="0 -960 960 960" aria-hidden="true" focusable="false"><path d="' + String(TIER_ICON_PATHS[name] || TIER_ICON_PATHS.custom) + '"/></svg>';
   }
@@ -3523,7 +3522,7 @@
       (function(p) {
         if (!p || typeof p.modelId !== "string" || p.modelId === "") return;
         var m = modelById(p.modelId);
-        /* 一覧に無い段は出さない（モデル入れ替えで段が宙に浮くのを防ぐ）。 */
+        /* Hide tiers missing from the list (keeps a tier from dangling after a model swap). */
         if (!m) return;
         var sel = (balance == null || m.credits == null || m.credits <= balance);
         var b = document.createElement("button");
@@ -3536,7 +3535,7 @@
           b.setAttribute("disabled", "disabled");
           b.setAttribute("aria-label", tierLabelOf(p) + " " + tierModelText(p, m) + (t.tierNoBalance ? " " + t.tierNoBalance : ""));
         }
-        /* #198 級名はアイコン＋太字、モデル側は (Model: effort) を小さく。 */
+        /* #198 Tier name is icon + bold; model side prints (Model: effort) small. */
         var nm = document.createElement("span");
         nm.className = "umeboshi-ask-tier-name";
         nm.innerHTML = tierIconSvg(p.tier);
@@ -3549,8 +3548,8 @@
         mn.className = "umeboshi-ask-tier-model";
         mn.textContent = tierModelText(p, m);
         b.appendChild(mn);
-        /* #198 目安クレジットは出さない。強さだけ（human 決定）。
-           段の effort が有るならその強さ、選択なしモデルはモデル全体の強さ。 */
+        /* #198 No credit estimates. Strength only (human decides).
+           Tiered effort shows its own strength; select-less models show whole-model strength. */
         var rowScore = presetEffortOf(p) === "" ? modelScore(m) : effortScoreValue(m, presetEffortOf(p));
         appendScoreEl(b, rowScore);
         if (!sel) {
@@ -3576,8 +3575,8 @@
     if (shown === 0) {
       var empty = document.createElement("div");
       empty.className = "umeboshi-ask-note";
-      /* presets が無い Worker（デプロイ前）でも「モデルが取れなかった」とは言わない。
-         4段階が使えない状態であることを正確に伝える。 */
+      /* Even on a presets-less Worker (pre-deploy) never say "models failed to load".
+         Say exactly that the 4-tier is unavailable. */
       empty.textContent = cachedModels.length === 0 ? t.modelsFailOption : t.tierEmpty;
       tierList.appendChild(empty);
     }
@@ -3614,7 +3613,7 @@
     var t = txNow();
     if (statusEl) statusEl.textContent = t.modelSwitched + (to ? ": " + to : "");
   }
-  // 読取専用API疎通＋popup結線（失敗しても足場UIは壊さない。#47 native select不使用）
+  // Read-only API check + popup wiring (never breaks scaffold UI on failure. No #47 native select)
   if (modelSel) {
     modelSel.disabled = true;
     modelSel.textContent = txNow().modelsLoading;
@@ -3623,7 +3622,7 @@
     if (modelSel.addEventListener) {
       modelSel.addEventListener("click", function() {
         if (modelSel.disabled) return;
-        /* #198 モデルボタンは4段階を開く。従来の一覧は詳細モデル選択の奥。 */
+        /* #198 Model button opens the 4-tier. The classic list sits behind the detail-model select. */
         if (tierPopup && !tierPopup.hidden) closeTierPopup();
         else openTierPopup();
       });
@@ -3632,7 +3631,7 @@
       modelCloseBtn.addEventListener("click", function() { closeModelPopup(); });
     }
     if (modelBackBtn && modelBackBtn.addEventListener) {
-      /* #198 4段階を閉じてから開く（2枚同時に重ねない）。詳細の奥から1タップで戻れる。 */
+      /* #198 Close the 4-tier before opening (never stack two). One tap returns from deep detail. */
       modelBackBtn.addEventListener("click", function() {
         closeModelPopup();
         openTierPopup();
@@ -3649,20 +3648,20 @@
     }
     if (tierDetailBtn && tierDetailBtn.addEventListener) {
       tierDetailBtn.addEventListener("click", function() {
-        /* #198 4段階を閉じてから従来のモデル一覧を開く（2枚同時には重ねない）。 */
+        /* #198 Close the 4-tier before opening the classic model list (never stack two). */
         closeTierPopup();
         openModelPopup();
       });
     }
     if (effortCloseBtn && effortCloseBtn.addEventListener) {
-      /* #198 ✕ は「学習画面に戻る」＝ Effort とモデル一覧を両方閉じる。 */
+      /* #198 Close means "back to study" = shut both Effort and the model list. */
       effortCloseBtn.addEventListener("click", function() {
         closeEffortPopup(false);
         closeModelPopup();
       });
     }
     if (effortBackBtn && effortBackBtn.addEventListener) {
-      /* #198 ← は1つ上（モデル一覧）に戻る。モデル一覧は開いたまま。 */
+      /* #198 Back-arrow goes one up (model list). The model list stays open. */
       effortBackBtn.addEventListener("click", function() { closeEffortPopup(true); });
     }
     if (effortBackdrop && effortBackdrop.addEventListener) {
@@ -3675,7 +3674,7 @@
       }).then(function(body) {
         var list = body && body.models ? body.models : [];
         cachedModels = Object.prototype.toString.call(list) === "[object Array]" ? list : [];
-        /* #198 4段階の定義も同じ応答で受け取る。無い Worker は4段階を出さない。 */
+        /* #198 The same response also carries the 4-tier defs. A Worker without them hides the 4-tier. */
         var presets = body && body.presets ? body.presets : [];
         cachedPresets = Object.prototype.toString.call(presets) === "[object Array]" ? presets : [];
         renderModelOptions(savedModel);

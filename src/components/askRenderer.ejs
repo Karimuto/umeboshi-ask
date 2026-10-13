@@ -1,8 +1,8 @@
-  /* ---------- #26: Markdown描画（自前・GFM表つき。ADR 0010） ----------
-     契約: Markdown文字列→サニタイズ済みHTML文字列の純粋関数。
-     生HTML不許可・画像不許可。数式ドル記法は記号をUnicodeへ写してドル記号を落とす
-     （MathJaxの無い端末でも読める。#95）。コードフェンス内は数式扱いしない。
-     Anki誤読を避けるため二重波括弧リテラルは書かない（連結で作る）。 */
+  /* ---------- #26: Markdown rendering (own code, GFM tables. ADR 0010) ----------
+     Contract: pure function from a Markdown string to a sanitized HTML string.
+     Raw HTML and images are not allowed. Dollar math maps to Unicode and the dollar signs drop
+     (readable even without MathJax. #95). Code fences are never treated as math.
+     Never write a double-brace literal (Anki misreads it); build it by concatenation. */
   function mdEscapeHtml(s) {
     return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
@@ -11,9 +11,9 @@
     if (/^(https?:|mailto:)/i.test(u)) return u.replace(/"/g, "%22");
     return "#";
   }
-  /* ---------- #95: 数式ドル記法（$...$ / $$...$$）→ Unicode 文字 ----------
-     旧挙動は「保護して素通し」で、AnkiDroid実測では $\rightarrow$ がそのまま出ていた。
-     既知コマンドは表でUnicodeへ写し、未知コマンドは \name のまま残す（情報損失なし）。 */
+  /* ---------- #95: dollar math ($...$ / $$...$$) -> Unicode chars ----------
+     Old behavior was "protect and pass through"; on AnkiDroid $\rightarrow$ leaked out verbatim.
+     Known commands map to Unicode via tables; unknown commands stay as \name (no info loss). */
   var MATH_DROP = {
     left: 1, right: 1, big: 1, Big: 1, bigg: 1, Bigg: 1, limits: 1,
     displaystyle: 1, textstyle: 1, scriptstyle: 1, nonumber: 1,
@@ -33,12 +33,12 @@
     lim: 1, limsup: 1, liminf: 1, max: 1, min: 1, sup: 1, inf: 1,
     mod: 1, bmod: 1, pmod: 1, injlim: 1, projlim: 1
   };
-  /* LaTeXの空白コマンド。不可視文字を直書きせずコードポイントで持つ。 */
+  /* LaTeX spacing commands. Hold invisible chars by code point, never inline. */
   var MATH_THIN = String.fromCharCode(0x2009);
   var MATH_MED = String.fromCharCode(0x2005);
   var MATH_EM = String.fromCharCode(0x2003);
   var MATH_SYM = {
-    /* 矢印 */
+    /* Arrows */
     rightarrow: "→", to: "→", leftarrow: "←", gets: "←",
     Rightarrow: "⇒", implies: "⇒", Leftarrow: "⇐",
     leftrightarrow: "↔", Leftrightarrow: "⇔", iff: "⟺",
@@ -60,7 +60,7 @@
     Nearrow: "⇖", Searrow: "⇘",hookrightarrow: "↪",
     circlearrowleft: "↺", circlearrowright: "↻",
     curvearrowleft: "↶", curvearrowright: "↷",
-    /* ギリシャ文字 */
+    /* Greek letters */
     alpha: "α", beta: "β", gamma: "γ", delta: "δ", epsilon: "ϵ",
     varepsilon: "ε", zeta: "ζ", eta: "η", theta: "θ", vartheta: "ϑ",
     iota: "ι", kappa: "κ", varkappa: "ϰ", lambda: "λ", mu: "μ", nu: "ν",
@@ -69,7 +69,7 @@
     chi: "χ", psi: "ψ", omega: "ω",
     Gamma: "Γ", Delta: "Δ", Theta: "Θ", Lambda: "Λ", Xi: "Ξ", Pi: "Π",
     Sigma: "Σ", Upsilon: "Υ", Phi: "Φ", Psi: "Ψ", Omega: "Ω",
-    /* 関係・論理・集合 */
+    /* Relations, logic, sets */
     leq: "≤", le: "≤", geq: "≥", ge: "≥", neq: "≠", ne: "≠",
     equiv: "≡", approx: "≈", sim: "∼", simeq: "≃", cong: "≅", propto: "∝",
     asymp: "≍", doteq: "≐", ll: "≪", gg: "≫", prec: "≺", succ: "≻",
@@ -84,7 +84,7 @@
     models: "⊨", Join: "⨝", joins: "⋈", join: "⋈",
     complement: "∁", backsim: "∽", approxeq: "≊", pitchfork: "⋔",
     curlyvee: "⋏", curlywedge: "⋎", wr: "≀", image: "ⅈ",
-    /* 演算子 */
+    /* Operators */
     times: "×", div: "÷", pm: "±", mp: "∓", cdot: "⋅", ast: "∗", star: "⋆",
     circ: "∘", bullet: "•", oplus: "⊕", ominus: "⊖", otimes: "⊗",
     oslash: "⊘", odot: "⊙", cap: "∩", cup: "∪", sqcap: "⊓", sqcup: "⊔",
@@ -94,7 +94,7 @@
     bigodot: "⨀", biguplus: "⨄", bigsqcap: "⨅",
     int: "∫", iint: "∬", iiint: "∭", iiiint: "⨌", oint: "∮",
     dots: "⋯", dotsc: "⋯", ldots: "…", cdots: "⋯", vdots: "⋮", ddots: "⋱",
-    /* その他の記号 */
+    /* Misc symbols */
     infty: "∞", partial: "∂", nabla: "∇", aleph: "ℵ", hbar: "ℏ", ell: "ℓ",
     Re: "ℜ", Im: "ℑ", wp: "℘", prime: "′", degree: "°", angle: "∠",
     triangle: "▵", square: "□", surd: "√", checkmark: "✓",
@@ -102,7 +102,7 @@
     flat: "♭", natural: "♮", sharp: "♯",
     clubsuit: "♣", diamondsuit: "♢", heartsuit: "♡", spadesuit: "♠",
     imath: "ı", jmath: "ȷ", mho: "℧", bowtie: "⋈",
-    /* 括弧・角・縦線 */
+    /* Brackets, corners, vertical bars */
     langle: "⟨", rangle: "⟩", lceil: "⌈", rceil: "⌉",
     lfloor: "⌊", rfloor: "⌋", lvert: "|", rvert: "|", vert: "|",
     lVert: "‖", rVert: "‖", Vert: "‖",
@@ -110,7 +110,7 @@
     lparen: "(", rparen: ")", llbracket: "[[", rrbracket: "]]",
     lmoustache: "⦜", rmoustache: "⦝",
     ulcorner: "◜", urcorner: "◝", llcorner: "⌞", lrcorner: "⌟",
-    /* 否定 */
+    /* Negations */
     nmid: "∤", nparallel: "∦", nleq: "≰", ngeq: "≱",
     nless: "≮", ngtr: "≯", nsim: "≁", ncong: "≇",
     nprec: "⊀", nsucc: "⊁", npreceq: "⋠", nsucceq: "⋡",
@@ -119,12 +119,12 @@
     ntrianglelefteq: "⋪", ntrianglerighteq: "⋫",
     Vdash: "⊩", Vvdash: "⊪", nVdash: "⊬", nVDash: "⊭",
     vDash: "⊽", nvDash: "⊮", ne: "≠",
-    /* 矢印の否定と長い矢印（数式3の別名） */
+    /* Negated arrows and long arrows (alias of Math 3) */
     nLeftarrow: "⇍", nRightarrow: "⇏", nLeftrightarrow: "⇎",
     multimap: "⟗", longmapsto: "⟼", leadsto: "⇝",
     impliesdbl: "⟹", impliedby: "⟸", looparrowleft: "↫",
     looparrowright: "↬", shortmid: "∣", shortparallel: "∥",
-    /* 大小関係 */
+    /* Order relations */
     leqslant: "⩽", geqslant: "⩾", leqq: "≦", geqq: "≧",
     lessgtr: "≶", gtrless: "≷", lessapprox: "≲", gtrapprox: "≳",
     lesssim: "≲", gtrsim: "≳", lessdot: "⋖", gtrdot: "⋗",
@@ -132,7 +132,7 @@
     curlyeqprec: "≞", curlyeqsucc: "≟", bumpeq: "≏", Bumpeq: "≎",
     eqcirc: "≖", circeq: "≗", triangleq: "≜", risingdotseq: "≗",
     fallingdotseq: "≘", doteqdot: "≙", approxcolon: "≊",
-    /* 二項演算とその他の記号 */
+    /* Binary ops and other symbols */
     ltimes: "⋉", rtimes: "⋊", divideontimes: "⋇", intercal: "⊺",
     backepsilon: "∍", backprime: "‵", Finv: "Ⅎ", Game: "⅁",
     eth: "ð", digamma: "ϝ", maltese: "✠", Bbbk: "ℶ",
@@ -141,8 +141,8 @@
     blacktriangleleft: "◀", blacktriangleright: "▶",
     circledR: "®", circledS: "Ⓢ", diagup: "∕", diagdown: "∖",
     measuredangle: "∡", sphericalangle: "∢", squarecap: "⨇",
-    /* 続き。コードポイントは Python の unicodedata で「名前」（PRECEDES OR
-       EQUAL TO など）と突き合わせて確定したものだけを置いてある。 */
+    /* Continued. Code points kept only when matched against Python unicodedata names
+       (PRECEDES OR EQUAL TO, etc.). */
     preceq: "≼", succeq: "≽", eqslantgtr: "⪯", eqslantless: "⪰",
     precnsim: "≨", succnsim: "≩", precnapprox: "⪵", succnapprox: "⪶",
     precapprox: "≾", succapprox: "≿",
@@ -161,19 +161,19 @@
     owns: "∋", isin: "∈", infin: "∞", exist: "∃", smallsetminus: "∖",
     smallint: "∫", Dagger: "‡", Box: "□", Diamond: "◊", Prime: "″",
     hslash: "∕", backslash: "∖",
-    /* 空白とエスケープ */
+    /* Spaces and escapes */
     ",": MATH_THIN, ";": MATH_MED, ":": MATH_MED, " ": " ",
     quad: MATH_EM, qquad: MATH_EM + MATH_EM,
     "%": "%", $: "$", "&": "&", _: "_", "#": "#", "{": "{", "}": "}",
     "|": "‖"
   };
-  /* アクセント。値は「対象の後に足す文字列」。不可視な結合記号は
-     直書きせずコードポイントで持つ（2026-10-01 実 Chromium のピクセル幅で
-     豆腐を判定した結果）。
-       U+0300 台 … sans-serif / serif / Segoe UI のすべてで描画される。
-       U+20D7 と U+20E1（矢印）… どのフォントスタックでも豆腐（□）になる。
-         そのため \vec と \overrightarrow は文字だけを出す。装飾を落とすのは
-         \mathbb や \mathcal が既にやっている扱いと同じ。 */
+  /* Accents. Values are "string appended after the target". Hold invisible combining marks
+     by code point, not inline (tofu check by real Chromium pixel width on 2026-10-01).
+     Result of the check).
+       U+0300 block ... renders in all of sans-serif / serif / Segoe UI.
+       U+20D7 and U+20E1 (arrows) ... tofu boxes in every font stack.
+         So \vec and \overrightarrow emit the letter only. Dropping the
+         decoration matches how \mathbb and \mathcal already behave. */
   var MATH_ACCENT = {
     overbrace: String.fromCharCode(0x23DE), underbrace: String.fromCharCode(0x23DF),
     overgroup: String.fromCharCode(0x23DE), undergroup: String.fromCharCode(0x23DF),
@@ -187,20 +187,20 @@
     acute: String.fromCharCode(0x0301), grave: String.fromCharCode(0x0300),
     mathring: String.fromCharCode(0x030A), mathringaccent: String.fromCharCode(0x030A)
   };
-  /* 装飾だけを落とすアクセント（上付き矢印など）。値は足さない。 */
+  /* Accents that drop only the decoration (raised arrows etc.). Append nothing. */
   var MATH_ACCENT_DROP = {
     vec: 1, overrightarrow: 1, overleftarrow: 1, overleftharpoon: 1,
     overrightharpoon: 1, underrightarrow: 1, underleftarrow: 1,
-    /* \boxed{x} は囲みだけ落とす。答えは x のまま残る。 */
+    /* \boxed{x} drops only the box. The answer stays x. */
     boxed: 1, framebox: 1, fbox: 1, mbox: 1
   };
-  /* 中身を捨てて何も描かない命令。\hspace{1cm} や \phantom{x} が
-     「\hspace{1cm}a」のままカードに漏れるのを防ぐ。 */
+  /* Commands that draw nothing and drop their body. Keeps \hspace{1cm} or \phantom{x}
+     from leaking onto the card as "\hspace{1cm}a". */
   var MATH_VANISH = {
     phantom: 1, hphantom: 1, vphantom: 1, smash: 1, vcenter: 1,
     hspace: 1, vspace: 1, null: 1, mathchoice: 1
   };
-  /* \not は後ろの記号を打ち消す接頭辞。合成文字のある組み合わせだけ表へ。 */
+  /* \not is a prefix that negates the next symbol. Only combos with a composed char go in the table. */
   var MATH_NOT = {
     in: "∉", ni: "∌", subset: "⊄", supset: "⊅",
     subseteq: "⊈", supseteq: "⊉", subsetneq: "⊊", supsetneq: "⊋",
@@ -209,7 +209,7 @@
     divides: "∤", prec: "⊀", succ: "⊁", preceq: "⋠", succeq: "⋡",
     vdash: "⊬", models: "⊭", equal: "≠", "=": "≠", to: "↚"
   };
-  /* 引き伸ばし矢印 \xrightarrow{...} の矢印本体。{...} は上付きのラベル。 */
+  /* Stretched arrows like \xrightarrow{...}: the arrow body. {...} is the overset label. */
   var MATH_XARROW = {
     xrightarrow: "⟶", xleftarrow: "⟵", xlongequal: "=",
     xRightarrow: "⟹", xLeftarrow: "⟸", xLeftrightarrow: "⟺",
@@ -219,8 +219,8 @@
     xrightharpoonup: "⇀", xrightharpoondown: "↽",
     xtwoheadrightarrow: "↠", xtwoheadleftarrow: "↞", Rrightarrow: "↠"
   };
-  /* 環境（行列・cases）。開き括弧|閉じ括弧|列区切りの3つ組。
-     1行のテキストへ落とす（カードの中で複数行にしないため）。 */
+  /* Environments (matrix, cases). A triple of open bracket | close bracket | column separator.
+     Flatten to one line of text (never multiline inside a card). */
   var MATH_ENV = {
     matrix: "|, ", pmatrix: "(|)|, ", bmatrix: "[|]|, ", Bmatrix: "{|}|, ",
     vmatrix: "‖|‖|, ", Vmatrix: "‖|‖|, ", smallmatrix: "|, ",
@@ -250,13 +250,13 @@
     x: "ₓ", β: "ᵦ", γ: "ᵧ", ρ: "ᵨ", φ: "ᵩ", χ: "ᵪ"
   };
   function mathGroup(src, i) {
-    /* src[i] が "{" なら対応する "}" まで、"\" なら制御列まるごと、
-       それ以外は1文字。{text, next} を返す。 */
+    /* If src[i] is "{" read to the matching "}", if "\" read the whole control sequence,
+       otherwise one char. Returns {text, next}. */
     if (src[i] !== "{") {
       if (i >= src.length) return { text: "", next: i };
       if (src[i] === "\\") {
-        /* 制御列は1つのトークン。x^\infty のように中括弧無しでも
-           バックスラッシュ1文字だけを読むと \infty が "infty" になる。 */
+        /* A control sequence is one token. Without braces, as in x^\infty, reading
+           only the backslash turns \infty into "infty". */
         var cm = /^\\[A-Za-z]+|\\./.exec(src.slice(i));
         if (cm) return { text: cm[0], next: i + cm[0].length };
       }
@@ -272,10 +272,10 @@
     return { text: src.slice(i + 1, j), next: Math.min(j + 1, src.length) };
   }
   function mathScript(mark, raw) {
-    /* 上付き・下付き。Unicode に載らない文字が混ざると、^ ごと消えると
-       "xN" という別の式になる。記号を残して原文を保つ。
-       記号を落とすのは「全部載る」か「載らないのが , ; 空白だけ」のとき。
-       一部だけ載る場合（lim_{n \to \infty}）は括弧付きで残す。 */
+    /* Super/subscripts. If a char has no Unicode form, dropping the ^ turns it into
+       "xN" (a different formula). Keep the mark to preserve the source.
+       Drop the mark only when all chars map, or the unmapped ones are just , ; space.
+       Partly mapped cases (lim_{n \to \infty}) stay parenthesized. */
     var map = (mark === "^") ? MATH_SUPER : MATH_SUB;
     var body = mathBody(raw);
     if (body.length === 0) return mark;
@@ -285,16 +285,16 @@
       if (map[body[i]] != null) mapped += map[body[i]];
       else { mapped += body[i]; rest += body[i]; }
     }
-    /* 2文字続けて英字なら、1つの指数ではなく語（\stackrel{def}{=} の def）。
-       Unicode には上付き d e f があるせいか「=ᵈᵉᶠ」と化けるので、
-       記号を残して括弧で囲む。 */
+    /* Two ASCII letters in a row are a word, not one exponent (the def in \stackrel{def}{=}).
+       Unicode has superscript d e f, so it would garble into "=def-sup"; keep
+       the mark and wrap in parens. */
     if (/[A-Za-z]{2,}/.test(body)) return mark + "(" + body + ")";
     if (trim(rest) === "" || /^[,\s;]*$/.test(rest)) return mapped;
     return mark + (body.length === 1 ? body : "(" + body + ")");
   }
   function mathFracPart(text) {
-    /* 分数の分子と分母。項が2つ以上あるときだけ括弧で囲む。
-       \frac{a+b}{c} を "a+b/c" にすると別の式になるため。 */
+    /* Numerator and denominator of a fraction. Parenthesize only with 2+ terms,
+       since \frac{a+b}{c} as "a+b/c" reads as a different formula. */
     var t = trim(mathBody(text));
     var depth = 0;
     for (var i = 0; i < t.length; i++) {
@@ -308,8 +308,8 @@
     return t;
   }
   function mathEnv(name, inner) {
-    /* \begin{pmatrix} ... \end{pmatrix} を1行のテキストへ落とす。
-       列は ", "、行は "; " で区切る。カードの中で改行しないため。 */
+    /* Flatten \begin{pmatrix} ... \end{pmatrix} to one line of text.
+       Columns join with ", ", rows with "; ". Never break lines inside a card. */
     var spec = MATH_ENV[name];
     if (spec == null) return null;
     var p = spec.split("|");
@@ -319,10 +319,10 @@
     return open + trim(mathBody(inner, col)).replace(/\s+([,;])/g, "$1") + close;
   }
   function mathEnvAt(src, i, cmd) {
-    /* i は \begin か \end の直後。\begin なら対応する \end まで読み、
-       1行のテキストへ落とした {text, next} を返す。書式が合わなければ null。
-       環境名は英字だけ。\begin{array}{cc} の {cc} は「名前」ではなく
-       列の指定（読み上げには不要）なので、名前として読まずに飛ばす。 */
+    /* i sits right after \begin or \end. For \begin read to the matching \end and
+       return the flattened {text, next}; null when malformed.
+       Env names are letters only. The {cc} in \begin{array}{cc} is a column
+       spec, not a "name", so skip it without reading it as a name. */
     var rest = src.slice(i + 1);
     var j = (rest[0] === "{") ? 1 : 0;
     var nm = /^[A-Za-z][A-Za-z*]*/.exec(rest.slice(j));
@@ -341,8 +341,8 @@
     if (close < 0 || trim(src.slice(e + 5, close)) !== name) return null;
     var inner = src.slice(from, e);
     var rendered = mathEnv(name, inner);
-    /* 表に無い環境（tikzpicture など）でも \begin と \end を
-       生文字列で漏らさず、中身だけを1行へ落とす。 */
+    /* Even for unknown envs (tikzpicture etc.), never leak raw \begin / \end;
+       flatten just the body to one line. */
     if (rendered == null) rendered = trim(mathBody(inner, " "));
     return { text: rendered, next: close };
   }
@@ -358,10 +358,9 @@
         i += m[0].length - 1;
         if (MATH_DROP[name] === 1) continue;
         if (name === "not") {
-          /* \not は後ろの記号を打ち消す。合成文字があればそれを、無ければ
-             NOT SIGN を前に置いて \not が生文字列で漏れないようにする。
-             後ろは \subset のような命令だけでなく、
-             \not= のように記号1文字でもよい。 */
+          /* \not negates the next symbol. Use the composed char when there is one,
+             else prefix NOT SIGN so raw \not never leaks.
+             The tail can be a command like \subset or one symbol like in \not=. */
           var gap = /^\s*/.exec(s.slice(i + 1))[0];
           var tail = s.slice(i + 1 + gap.length);
           var nm = /^\\([A-Za-z]+|.)/.exec(tail);
@@ -398,13 +397,13 @@
           continue;
         }
         if (name === "\\") {
-          /* 環境の中では \\ が行区切り。外では空白と同じ扱いに落とす。 */
+          /* Inside an env, \\ is a row separator. Outside it falls back to a space. */
           out += colSep ? "; " : " ";
           continue;
         }
         if (MATH_XARROW[name] != null) {
-          /* \xrightarrow{heat} は「heat を上に載せた矢印」。ラベルは矢印の
-             後ろに細空白を置いて残す（heat だけが残ると別の式に見える）。 */
+          /* \xrightarrow{heat} is "an arrow with heat on top". Keep the label after
+             the arrow with a thin space (bare heat would read as another formula). */
           var xa = "";
           var xp = i + 1;
           /* \xrightarrow[under]{over}: skip the optional [under] label. */
@@ -423,21 +422,21 @@
           continue;
         }
         if (MATH_ACCENT[name] != null) {
-          /* \hat{y} は対象の後ろに結合文字（y + U+0302）を足す。 */
+          /* \hat{y} appends a combining char to the target (y + U+0302). */
           var ag = mathGroup(s, i + 1);
           i = ag.next - 1;
           out += trim(mathBody(ag.text)) + MATH_ACCENT[name];
           continue;
         }
         if (MATH_ACCENT_DROP[name] === 1) {
-          /* \vec{v} は v だけ出す。矢印の結合記号は豆腐になるため。 */
+          /* \vec{v} emits only v. The arrow combining mark turns to tofu. */
           var dg = mathGroup(s, i + 1);
           i = dg.next - 1;
           out += trim(mathBody(dg.text));
           continue;
         }
         if (name === "binom" || name === "dbinom" || name === "tbinom") {
-          /* 二項係数。{ } を落とすと \binom{n}k になり別の意味に見える。 */
+          /* Binomial coefficient. Dropping { } turns \binom{n}k into another meaning. */
           var ca = mathGroup(s, i + 1);
           var cb = mathGroup(s, ca.next);
           i = cb.next - 1;
@@ -463,8 +462,8 @@
           if (env) { out += env.text; i = env.next - 1; continue; }
         }
         if (name === "overset" || name === "stackrel" || name === "underset") {
-          /* 上下に置く指定は、読み上げ用の1行テキストでは
-             「上/下側の条件を本体の後ろ（手前）に並べる」形へ落とす。 */
+          /* Stacked above/below markers flatten for one-line speech text: the side
+             condition moves behind (before) the body. */
           var sa = mathGroup(s, i + 1);
           var sb = mathGroup(s, sa.next);
           i = sb.next - 1;
@@ -499,7 +498,7 @@
           }
           continue;
         }
-        /* 未知コマンドは原文のまま。直後の {} も省略せず残す。 */
+        /* Unknown commands stay verbatim. Keep the trailing {} too. */
         out += m[0];
         if (s[i + 1] === "{") {
           var ug = mathGroup(s, i + 1);
@@ -514,9 +513,9 @@
         out += mathScript(c, sg.text);
         continue;
       }
-      /* 数式中の裸の & は整列記号。環境の中なら列区切り、外なら空白に落とす
-         （\begin{align} を付けずに書かれる $$a &= b$$ にも効く）。
-         エスケープした \& は MATH_SYM を通るので & のまま残る。 */
+      /* A bare & in math is an alignment mark: column separator inside an env,
+         space outside (also covers $$a &= b$$ written without \begin{align}).
+         Escaped \& goes through MATH_SYM, so it stays &. */
       if (c === "&") { out += colSep || " "; continue; }
       if (c === "{") {
         var bg = mathGroup(s, i);
@@ -530,15 +529,15 @@
     return out;
   }
   function mathToUnicode(src) {
-    /* ドル記法（$...$ / $$...$$）をUnicode文字の並びへ。未知コマンドは原文のまま。 */
+    /* Dollar notation ($...$ / $$...$$) to a Unicode char sequence. Unknown commands stay verbatim. */
     var s = trim(String(src == null ? "" : src));
     if (s.slice(0, 2) === "$$") s = s.slice(2, Math.max(2, s.length - 2));
     else if (s.charAt(0) === "$") s = s.slice(1, Math.max(1, s.length - 1));
     return trim(mathBody(s).replace(/[ \t]{2,}/g, " "));
   }
   function mdCodeRanges(src) {
-    /* コードフェンスとインラインコードの文字範囲。数式変換は触らない
-       （シェル例の echo "$HOME" を壊さないため）。 */
+    /* Char ranges of code fences and inline code. Never run math conversion there
+       (so a shell sample like echo "$HOME" survives). */
     var s = String(src == null ? "" : src);
     var ranges = [];
     var pos = 0;
@@ -574,8 +573,8 @@
       for (var i = 0; i < code.length; i++) {
         if (off >= code[i][0] && off < code[i][1]) return m;
       }
-      /* 閉じ $ の直後が数字なら金額の範囲（$20-$30）であって数式ではない。
-         このまま数式にするとドル記号が消えて「20-30」になる。 */
+      /* A digit right after the closing $ is a money range ($20-$30), not math.
+         Converting it would drop the dollars into "20-30". */
       if (m.slice(0, 2) !== "$$" && /[0-9]/.test(String(src[off + m.length] || ""))) return m;
       holders.push(m);
       return "⁠MATH" + (holders.length - 1) + "⁠";
@@ -589,7 +588,7 @@
     });
   }
   function mdInline(src) {
-    /* 生HTMLは描画しない：タグっぽい断片を落としてからescapeする。属性値の残骸も消す。 */
+    /* Raw HTML is never drawn: drop tag-like fragments before escaping. Also kill attr residue. */
     var noHtml = String(src == null ? "" : src).replace(/<[^>\n]*>?/g, " ").replace(/\s(on\w+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, " ");
     var s = mdEscapeHtml(noHtml);
     s = s.replace(/`([^`\n]+?)`/g, function(m, code) { return "<code>" + code + "</code>"; });
@@ -651,10 +650,10 @@
         continue;
       }
       if (inCode) { codeBuf.push(line); continue; }
-      /* #215 ATX見出しは CommonMark の許す形まで受ける。行頭の空白（半角3つまで・全角）と
-         # 1-6 個を許可する。モデルが「　## x」や「##### x」を出すと文字列のまま表示されていた。
-         # の後の空白は必須（#tag を見出しにしないため）。4個以上の # は CSS を持つ最も小さい
-         h3 に寄せる（h4-h6 の既定が Anki カードCSS と衝突しないように）。 */
+      /* #215 ATX headings accept up to the CommonMark shape. Leading blanks (up to 3 half-width
+         or full-width spaces) and 1-6 # allowed. Models emit full-width-space "## x" or "##### x"
+         that stayed literal. Space after # is required (so #tag is no heading). 4+ # fold to
+         h3, the smallest with CSS (keeps h4-h6 defaults from clashing with Anki card CSS). */
       var h = line.match(/^[ \t\u3000]{0,3}(#{1,6})[ \t\u3000]+(.*)$/);
       if (h) {
         flushPara(); flushList(); flushQuote();

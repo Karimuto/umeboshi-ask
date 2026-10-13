@@ -3,7 +3,7 @@
 // Templates land under `.github/ISSUE_TEMPLATE/`.
 // Reads `git ls-files` (tracked files only), copies `inScope()` files to
 // the destination root, and places the `oss/` manuscripts as the tree root
-// files (LICENSE, README.md, AGENTS.md, package.json, CONTRIBUTING.md,
+// files (LICENSE, README.md, README.ja.md, AGENTS.md, package.json, CONTRIBUTING.md,
 // CODEOWNERS, SECURITY.md, .github/ISSUE_TEMPLATE/*.md).
 //
 // Usage: node oss/assemble.mjs [dest]  (default: %TEMP%/252/oss-tree)
@@ -22,6 +22,7 @@ const dest = path.resolve(process.argv[2] ?? process.env.OSS_TREE
 const ROOT_FILES = new Map([
   ["oss/LICENSE", "LICENSE"],
   ["oss/README.md", "README.md"],
+  ["oss/README.ja.md", "README.ja.md"],
   ["oss/AGENTS.md", "AGENTS.md"],
   ["oss/package.json", "package.json"],
   ["oss/CONTRIBUTING.md", "CONTRIBUTING.md"],
@@ -42,10 +43,10 @@ for (const [src, out] of ROOT_FILES) {
   }
 }
 
-// dest が既存 repo の clone の場合、.git を消さない。追跡外の一時物
-// （node_modules・.wrangler・*.tgz）は持ち込まないので残っても無害だが、
-// 古い複写が残らないよう scope 外の追跡ファイルを消すのは呼び側の仕事。
-// ここでは .git/.github 以外を掃除してから複写する。
+// If dest is a clone of an existing repo, keep .git. Untracked scratch
+// (node_modules, .wrangler, *.tgz) is never copied, so leftovers are harmless,
+// but removing out-of-scope tracked files is the caller's job to avoid stale copies.
+// Here clean everything except .git/.github before copying.
 for (const e of fs.existsSync(dest) ? fs.readdirSync(dest) : []) {
   if (e === ".git") continue;
   fs.rmSync(path.join(dest, e), { recursive: true, force: true });
@@ -63,8 +64,8 @@ for (const [src, out] of ROOT_FILES) {
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.copyFileSync(path.join(REPO, src), to);
 }
-// host の claudeflare/package.json は stripe 依存と test:full を含むので、
-// そのまま持ち込まない。OSS 用に書き換える（版は host から読む）。
+// Host claudeflare/package.json carries the stripe dep and test:full, so do
+// not copy it as-is. Rewrite it for OSS (version read from host).
 {
   const host = JSON.parse(fs.readFileSync(path.join(REPO, "claudeflare/package.json"), "utf8"));
   const keep = ["@cloudflare/workers-types", "typescript", "vitest", "wrangler"];

@@ -25,7 +25,7 @@ const read = (rel) => fs.readFileSync(path.join(REPO, rel), "utf8").replace(/\r/
 const SCAFFOLD = "src/components/askScaffold.ejs";
 const PANEL = "addon/templates/inject.html";
 const WORKER = "claudeflare/src/panel.ts";
-// OS6c: core.ts が照会口の正。index.ts（完全版）がある host 側では両方見る。
+// OS6c: core.ts is the canonical route. With full index.ts present, check both.
 const CORE_ROUTE = "claudeflare/src/core.ts";
 const FULL_ROUTE = "claudeflare/src/index.ts";
 const ADDON = "addon/inject.py";

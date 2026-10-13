@@ -1,55 +1,55 @@
-// #255 OS2a: Worker のアクセストークン認証。
+// #255 OS2a: Worker access-token auth.
 //
-// 自己ホスト利用者は面板の設定に Worker URL とトークンを貼るだけで
-// threads・settings を自分の Worker に保存できる。認証は env の
-// `ASK_TOKEN` 1本との定時間比較。一致したら「そのトークンの SHA-256
-// ハッシュ」をユーザー ID として使い、token の生値はどこにも保存しない。
+// Self-host users paste the Worker URL plus a token into panel settings, and
+// threads/settings save to their own Worker. Auth is one constant-time
+// compare against env `ASK_TOKEN`. On match, the token's SHA-256 hash is the
+// user ID; the raw token is never stored anywhere.
 //
-// Bearer の解釈順（この ticket で確定させる契約）:
-//   1. `ASK_TOKEN` が設定されていて Bearer がそれと一致 → token identity
-//      （予算も精算も通さない。credits 概念を持たない）
-//   2. 一致しなければ JWT 検証（完全版だけの経路）
-//   3. どちらでもなければ匿名
-// `ASK_TOKEN` 設定時に不一致の Bearer が来たら 401（匿名に落とさない）。
-// `ASK_TOKEN` 未設定のときの既存挙動（JWT 検証・匿名フォールバック）は変えない。
+// Bearer precedence (contract fixed by this ticket):
+//   1. `ASK_TOKEN` set and Bearer matches it -> token identity
+//      (no budget, no settle. No credits concept.)
+//   2. Otherwise JWT verify (hosted-only path)
+//   3. Neither -> anon
+// A non-matching Bearer while `ASK_TOKEN` is set is 401 (never falls to anon).
+// Without `ASK_TOKEN`, existing behavior (JWT verify + anon fallback) is unchanged.
 //
-// #262 OS4a: JWT の検証器は外から注入する（依存注入）。このファイルは
-// 完全版専用の auth.ts を import しないので、コア入口 (src/core.ts) は
-// JWT の実装へ物理的に到達できない。検証器を渡すのは完全版 (src/index.ts)
-// だけで、渡さないコアでは JWT 検証の経路そのものが存在しない。
+// #262 OS4a: the JWT verifier is injected (dependency injection). This file
+// never imports the hosted-only auth.ts, so the core entry (src/core.ts)
+// cannot physically reach the JWT implementation. Only hosted (src/index.ts)
+// passes a verifier; core without one has no JWT path at all.
 import { secretEquals } from "./secret";
 import { withCors } from "./cors";
 
 /**
- * 保存系の 401。面板は `needLogin` を見て再ログイン・ローカル設定への
- * フォールバックへ移るので、形は完全版入口・コア入口で同一にする。
+ * Saved-route 401. The panel watches `needLogin` to move to re-login or the
+ * local-settings fallback, so keep the shape identical on hosted and core.
  */
 export function needLoginJson(request: Request, status: number, error: string, allowHeaders?: string): Response {
   return withCors(request, Response.json({ error, needLogin: true }, { status }), allowHeaders);
 }
 
-/** 認証の結論。route は kind だけ見て分岐する。 */
+/** Auth result. Routes branch on kind only. */
 export type Identity =
   | { kind: "anon" }
   | { kind: "user"; sub: string }
   | { kind: "token"; userId: string }
   | { kind: "unauthorized" };
 
-/** 認証が要る env の最も薄い断面。 */
+/** Slimmest env slice that needs auth. */
 export interface IdentityEnv {
   ASK_TOKEN?: string;
   JWT_SECRET?: string;
 }
 
-/** Authorization: Bearer の値。形式不符は空文字。 */
+/** Authorization: Bearer value. Bad format is empty string. */
 export function bearerOf(request: Request): string {
   const h = request.headers.get("Authorization");
   return h && h.startsWith("Bearer ") ? h.slice(7).trim() : "";
 }
 
 /**
- * token の SHA-256 ハッシュ（hex）。token 自体は KV に書かないので、
- * 保存された Threads の所有者 ID はこのハッシュになる。
+ * SHA-256 hash (hex) of the token. The raw token is never written to KV, so
+ * stored Threads are owned by this hash.
  */
 export async function tokenUserId(token: string): Promise<string> {
   const digest = new Uint8Array(
@@ -60,7 +60,7 @@ export async function tokenUserId(token: string): Promise<string> {
   return hex;
 }
 
-/** 保存系のユーザー ID。token はハッシュ・JWT は sub。anon・ unauthorized は null。 */
+/** Storage user ID. Token hashes, JWT subs. anon/unauthorized are null. */
 export async function storageUserId(
   request: Request,
   env: IdentityEnv,
@@ -73,17 +73,17 @@ export async function storageUserId(
 }
 
 /**
- * JWT 検証器。有効なら sub、署名不正・期限切れ・形式不正なら null。
- * 完全版の実装 (src/auth.ts の verifyJwt) を入口から注入する。
+ * JWT verifier. Returns sub when valid, null on bad signature/expiry/format.
+ * The hosted implementation (verifyJwt in src/auth.ts) is injected by the entry.
  */
 export type JwtVerifier = (token: string, secret: string) => Promise<string | null>;
 
-/** 認証の依存注入口。完全版だけが verifyJwt を渡す（#262 OS4a）。 */
+/** Auth injection point. Only hosted passes verifyJwt (#262 OS4a). */
 export interface IdentityDeps {
   verifyJwt?: JwtVerifier;
 }
 
-/** Bearer を解釈して Identity を返す（上の契約どおり）。 */
+/** Resolve Bearer to an Identity (per the contract above). */
 export async function resolveIdentity(
   request: Request,
   env: IdentityEnv,
@@ -99,8 +99,8 @@ export async function resolveIdentity(
     if (sub) return { kind: "user", sub };
     return { kind: "unauthorized" };
   }
-  // ASK_TOKEN 設定時に不一致の Bearer は匿名に落とさない。
+  // A non-matching Bearer while ASK_TOKEN is set never falls back to anon.
   if (env.ASK_TOKEN) return { kind: "unauthorized" };
-  // 検証鍵が何もない Bearer は匿名扱い（既存挙動）。
+  // A Bearer with no verify key is anon (existing behavior).
   return { kind: "anon" };
 }

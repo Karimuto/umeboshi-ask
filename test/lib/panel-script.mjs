@@ -1,13 +1,13 @@
-// panel の script 本文を組み立てる。
+// Assemble the panel script body.
 //
-// 候補2（architecture review）: renderer は `src/components/askRenderer.ejs`
-// に切り出されており、`askScaffold.ejs` は `<%- include('./askRenderer.ejs') -%>`
-// でそれを差し込む。vm 駆動のテストは script 本文が必要なので、scaffold と
-// partial を include 順に連結して返す。renderer は script タグ無しの生 JS なので、
-// 連結後の本文に EJS タグは残らない（s13-dod の FAIL-A 走査対象にも renderer が残る）。
+// Option 2 (architecture review): the renderer lives in
+// `src/components/askRenderer.ejs`, included by `askScaffold.ejs` via
+// `<%- include('./askRenderer.ejs') -%>`. VM-driven tests need the script body,
+// so concatenate scaffold and partial in include order. The renderer is raw JS
+// with no script tags, so no EJS tags remain after concat (renderer also stays
+// in the s13-dod FAIL-A scan targets).
 //
-// `from` は差し替え口。実機のテンプレ（AnkiConnect採取）など rendered HTML を
-// 渡すと、そのファイルをそのまま読んで <script> 本文を返す。
+// `from` is the override slot. Pass rendered HTML such as a live template
 
 import fs from "node:fs";
 import path from "node:path";
@@ -21,7 +21,7 @@ const SCAFFOLD = "src/components/askScaffold.ejs";
 const RENDERER = "src/components/askRenderer.ejs";
 
 const SCRIPT_TAG = /<script>([\s\S]*?)<\/script>/g;
-/** scaffold の renderer include。1つ目のグループは `-%>` の slurp 印。 */
+/** Scaffold renderer include. First group is the `-%>` slurp marker. */
 const INCLUDE_TAG = /<%[-=]?\s*include\(['"]\.\/askRenderer\.ejs['"]\)\s*([-_])?%>/;
 
 function scriptBody(src) {
@@ -30,18 +30,18 @@ function scriptBody(src) {
   return m.map((x) => x[1]).join("\n");
 }
 
-/** partial 本文。最終行の改行は持たない（include 位置の改行は scaffold 側が持つ）。 */
+/** Partial body. No trailing newline (the scaffold side owns the include-site break). */
 function rendererSource() {
   return fs.readFileSync(path.join(REPO, RENDERER), "utf8").replace(/\r?\n$/, "");
 }
 
-/** scaffold の include 1本を partial 本文で置き換える。EJS タグは残らない。 */
+/** Replace the one scaffold include with the partial body. No EJS tags remain. */
 function expandRenderer(src) {
   const m = INCLUDE_TAG.exec(src);
   if (!m) return src;
   let end = m.index + m[0].length;
-  // EJS の `-%>` はタグ直後の改行を1本落とす（ejs.js の `^(?:\r\n|\r|\n)`）。
-  // helper も同じだけ落とすので、連結結果は build 出力の本文と byte 一致する。
+  // EJS `-%>` drops one newline after the tag (ejs.js `^(?:\r\n|\r|\n)`).
+  // The helper drops the same, so concat matches the build body byte-for-byte.
   if (m[1] === "-") {
     if (src.startsWith("\r\n", end)) end += 2;
     else if (/^[\r\n]/.test(src.slice(end, end + 1))) end += 1;
@@ -50,9 +50,9 @@ function expandRenderer(src) {
 }
 
 /**
- * scaffold + partial を include 順に連結したテンプレート本文。
- * `module: true` は host build と同じ注入を通す（OS5a）。注入関数は
- * addon/inject-build.mjs の 1 本を build とテストで共有する。
+ * Template body: scaffold + partial concatenated in include order.
+ * `module: true` applies the same injection as the host build (OS5a). The
+ * injector is the single addon/inject-build.mjs shared by build and tests.
  */
 export function panelSource({ from, module: withModule = false } = {}) {
   const src = from
@@ -62,7 +62,7 @@ export function panelSource({ from, module: withModule = false } = {}) {
   return withModule ? injectModule(expanded, loadModule(REPO)) : expanded;
 }
 
-/** vm に流す script 本文（scaffold の <script> を1本に連結したもの）。 */
+/** Script body fed to the VM (scaffold <script> concatenated into one). */
 export function panelScript({ from, module: withModule = false } = {}) {
   return scriptBody(panelSource({ from, module: withModule }));
 }

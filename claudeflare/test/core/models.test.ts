@@ -1,6 +1,6 @@
-// #260 OS3b: モデル一覧の bundle 側（一覧 route・価格順・Effort の解像）はコア入口
-// (src/core.ts) を向く。Allowlist・在庫cache・cron・purge・credits の残高は hosted
-// の機構なので test/full/models-allowlist.test.ts が完全版入口を向いて検証する。
+// #260 OS3b: the bundle side of the model list (list route, price order, Effort resolution)
+// targets the core entry (src/core.ts). Allowlist, inventory cache, cron, purge, and credit
+// balances are hosted machinery, covered via the full entry by test/full/models-allowlist.test.ts.
 import { describe, expect, it } from "vitest";
 import { handleCoreRequest } from "../../src/core";
 import {
@@ -84,31 +84,31 @@ describe("GET /api/ask/models (S1足場＋S8)", () => {
     );
   });
 
-  // #100 穴1: 以前は `origin ?? "*"` で無条件に反転返していた。
-  // 任意オリジンのJSONがブラウザ経由で読めていたことを塞ぐ。
+  // #100 hole 1: previously `origin ?? "*"` reflected unconditionally.
+  // Closes reading arbitrary-origin JSON via a browser.
   it("許可リストのOriginだけをechoし、他はACAOを出さない", async () => {
-    // Ankiのfile:// WebView（Origin: null）は許可。
+    // Anki's file:// WebView (Origin: null) is allowed.
     const anki = await handleCoreRequest(
       get("/api/ask/models", { headers: { Origin: "null" } }),
       env,
     );
     expect(anki.headers.get("Access-Control-Allow-Origin")).toBe("null");
 
-    // 同一origin（Worker自身の/billingから）は許可。
+    // Same-origin (the Worker itself) is allowed.
     const same = await handleCoreRequest(
       get("/api/ask/models", { headers: { Origin: "https://ask.example" } }),
       env,
     );
     expect(same.headers.get("Access-Control-Allow-Origin")).toBe("https://ask.example");
 
-    // 別オリジンはACAO無し。ブラウザが読めなくなるのが防御。
+    // Other origins get no ACAO. The browser becoming unable to read is the defense.
     const evil = await handleCoreRequest(
       get("/api/ask/models", { headers: { Origin: "https://evil.example" } }),
       env,
     );
     expect(evil.headers.get("Access-Control-Allow-Origin")).toBeNull();
 
-    // Originヘッダ無し（curl / AnkiConnect / Stripe webhook）。
+    // No Origin header (curl / AnkiConnect / Stripe webhook).
     const missing = await handleCoreRequest(get("/api/ask/models"), env);
     expect(missing.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
@@ -146,14 +146,14 @@ describe("#72 AA-Omniscienceスコア", () => {
     for (const m of body.models) expect("evidenceUrl" in m).toBe(false);
   });
 
-  // #198: 頭よさそうスコアを Effort 別に出すための値。実測した Effort だけを載せ、
-  // 欠測（glm-5.3-flash の high/low）は載せない。パネル側は欠損を `—` にする。
+  // #198: per-Effort values for the looks-smart score. Only measured Efforts are listed;
+  // unmeasured (glm-5.3-flash high/low) are omitted. The panel renders gaps as `—`.
   it("bundleのscoresはEffort別の実測値だけを持つ", () => {
     const scoresById = Object.fromEntries(BUNDLE_MODELS.map((m) => [m.id, m.scores]));
     expect(scoresById["anthropic/claude-opus-5.5"]).toEqual({ max: 46, xhigh: 43, high: 41, medium: 40, low: 39 });
     expect(scoresById["google/gemini-3.8-flash"]).toEqual({ high: 30, medium: 29, low: 21 });
     expect(scoresById["z-ai/glm-5.3-flash"]).toEqual({ max: 7 });
-    // Effort を選べないモデルは scores を持たない。
+    // Models without Effort choice carry no scores.
     expect(scoresById["xiaomi/mimo-v2.6-pro"]).toBeUndefined();
     expect(scoresById["xiaomi/mimo-v2.5"]).toBeUndefined();
   });
@@ -166,7 +166,7 @@ describe("#72 AA-Omniscienceスコア", () => {
     }
   });
 
-  // #198: 4段階プリセット。credits（予約額）を出さずに頭よさそうスコアで選ばせる。
+  // #198: 4-tier presets. Pick by looks-smart score without showing credits (reserved amount).
   it("MODEL_PRESETSは4段階を順に持ち、bundleのidと矛盾しない", () => {
     expect(MODEL_PRESETS.map((p) => p.tier)).toEqual(["basic", "middle", "premium", "ultra"]);
     for (const p of MODEL_PRESETS) {

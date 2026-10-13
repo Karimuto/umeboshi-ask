@@ -1,35 +1,35 @@
-# #259 OS3a: 課金のない Worker コア入口。完全版 (wrangler.toml) の横に立つ
-# 2本目のデプロイ設定で、OSS として配る Worker 部分の元になる。
+# #259 OS3a: billing-free Worker core entry. Second deploy config beside the
+# full build (wrangler.toml); source of the Worker part shipped as OSS.
 #
-# #264 OS4b: hosted 運用の機構を外した最終形（本ファイルで確定）。
-#   日次 cron なし / KV はコメント例 / Node 互換 flag なし / vars ブロックなし /
-#   本番 KV ID は書かない — すべて完全版 (wrangler.toml) 側が持つ。
+# #264 OS4b: final shape without hosted machinery (fixed in this file).
+#   no daily cron / KV as commented example / no node-compat flag / no vars block /
+#   no prod KV id — the full build (wrangler.toml) holds all of them.
 #
-# 立てるのに要るのは OPENROUTER_API_KEY だけ（ASK_TOKEN は任意）。
+# Only OPENROUTER_API_KEY is needed (ASK_TOKEN optional).
 
 name = "umeboshi-ask-core"
 main = "src/core.ts"
 compatibility_date = "2024-09-23"
 
-# crons は持たない。モデル在庫の更新も Stripe の照合も完全版の日次cron 1本が
-# 担う（#115 / spec #110 決定7）。コアは bundle 固定5モデルで動く。
+# No crons. The full daily cron owns both model-inventory refresh and Stripe
+# checks (#115 / spec #110 decision 7). Core runs on the fixed 5-model bundle.
 #
-# nodejs_compat は付けない。完全版が要るのは Stripe 公式SDK (stripe-node) の
-# Node 前提の解決で、コアは課金を載せないので stripe を import しない
-# （billing・billing-view・reconcile・settle・usage・anon は読み込まない）。
+# No nodejs_compat. The full build needs it to resolve the Stripe SDK (stripe-node)
+# Node assumptions; core ships no billing so it never imports stripe
+# (never loads billing, billing-view, reconcile, settle, usage, anon).
 #
-# 認証はアクセストークン1本。ログイン認証（外部IdP・署名付きトークン・
-# 20文字コード）の経路は持たない（#262 OS4a: 完全版 wrangler.toml 側の仕事）。
-#   npx wrangler secret put OPENROUTER_API_KEY        # 公開リポ・ログに残さない
-#   npx wrangler secret put ASK_TOKEN                 # 任意。保存を使うときだけ
+# Auth is a single access token. No login-auth path (external IdP, signed
+# tokens, 20-char codes) (#262 OS4a: full wrangler.toml side owns it).
+#   npx wrangler secret put OPENROUTER_API_KEY        # keep out of public repo/logs
+#   npx wrangler secret put ASK_TOKEN                 # optional. Only when saving.
 #
-# 保存（threads・settings・面板照会）に KV は任意。束縛しなければ chat・models
-# は動き、保存系は 500 になって面板がローカル設定にフォールバックする
-# （#259 OS3a の劣化契約）。束縛する自己ホストだけ作る:
+# KV is optional for storage (threads, settings, panel lookup). Without a binding,
+# chat/models run and storage routes 500 while the panel falls back to local settings
+# (#259 OS3a degraded contract). Only self-hosts that bind KV create one:
 #   npx wrangler kv namespace create UMEBOSHI_KV
 # [[kv_namespaces]]
 # binding = "UMEBOSHI_KV"
 # id = "00000000000000000000000000000000"
 #
-# ローカルで試す（KV なし）:
+# Try locally (no KV):
 #   cd claudeflare && npx wrangler dev --config wrangler.core.toml
