@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Email `karimuto.dev@gmail.com`
+Use GitHub private vulnerability reporting
 with what you found
 and how to reproduce it.
 We accept reports

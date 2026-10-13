@@ -99,5 +99,5 @@ for those who do not want to self-host.
 The only differences are login,
 payment, and sync.
 This repo has none of those.
-See https://umeboshi-ask.pages.dev/
+Ask the maintainer
 for the hosted version.

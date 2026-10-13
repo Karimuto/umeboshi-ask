@@ -116,4 +116,4 @@ AnkiDroid 用の loopback、同一出所)。
 違いはログイン、
 支払い、同期だけ。
 この repo には無い。
-ホスト版は https://umeboshi-ask.pages.dev/ を見る。
+ホスト版は運営者に聞く。
