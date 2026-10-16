@@ -84,6 +84,12 @@ threads GET に残るのを見る。
 - `npm run test:core`: Worker コア試験
 (`claudeflare/test/core`)。
 
+## 開発への参加
+
+質問、機能提案、開発環境、PR の手順は
+[参加ガイド](CONTRIBUTING.md)をご覧ください。
+投稿や議論には英語を使ってください。翻訳ツールを使ってもかまいません。
+
 ## 境界
 
 境界番 (`test/oss-boundary.test.mjs`) が課金語を

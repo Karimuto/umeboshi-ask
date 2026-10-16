@@ -69,6 +69,12 @@ Then check the round-trip:
 - `npm test`: root tests (`node --test`).
 - `npm run test:core`: Worker core tests (`claudeflare/test/core`).
 
+## Contributing
+
+See the [contribution guide](CONTRIBUTING.md) for questions, feature requests,
+development setup, and pull requests. Use English when participating;
+translation tools are welcome.
+
 ## Boundary
 
 The boundary guard (`test/oss-boundary.test.mjs`) keeps billing words out of
