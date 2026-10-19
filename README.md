@@ -2,8 +2,8 @@
 
 日本語版: [README.ja.md](README.ja.md)
 
-Self-hosted study helper for Anki.
-A Cloudflare Worker core, an Anki panel, and an Anki add-on in one package.
+Self-hosted study helper for Anki, with a Cloudflare Worker core, an Anki panel,
+and an Anki add-on in one package.
 
 License: MIT.
 
@@ -12,8 +12,7 @@ License: MIT.
 - Node.js 24 LTS with npm and Git.
 - Wrangler 3.x (3.114.17 works with this project).
 - Anki Desktop 25.09.2 or later to try the add-on in Anki.
-- A Cloudflare account only when you deploy.
-  Local runs and tests do not need one.
+- A Cloudflare account, only when you deploy. Local runs and tests do not need one.
 
 ## What you get
 
@@ -46,21 +45,20 @@ npx wrangler dev --config wrangler.oss-local.toml --port 8799
 ```
 
 `wrangler.oss-local.toml` is yours. Do not commit it.
-`ASK_TOKEN` is optional. It is only needed to save (threads, settings).
+`ASK_TOKEN` is optional and only needed to save (threads, settings).
 
-Without `[[kv_namespaces]]`, chat and models still work.
-Threads and settings fail, and the panel falls back to local settings.
+Without `[[kv_namespaces]]`, chat and models still work, but threads and
+settings fail, so the panel falls back to local settings.
 
 
 ### 2. Add the panel to Anki
 
-1. Run `npm run build` and `npm run build:addon`.
-   The package is `umeboshi-ask-companion.ankiaddon` in the repository root.
-2. In Anki, open Tools > Add-ons > Install from File, select the package,
-   and restart Anki.
-3. Open Tools > Add-ons and choose `umeboshi-ask: Inject ask`.
-   Select a note type and press Apply.
-   For details, see [CONTRIBUTING.md](CONTRIBUTING.md#check-panel-and-add-on-behavior-in-anki).
+1. Run `npm run build` and `npm run build:addon`. The package is
+   `umeboshi-ask-companion.ankiaddon` in the repository root.
+2. In Anki, open Tools > Add-ons > Install from File, select the package, and restart Anki.
+3. Open Tools > Add-ons and choose `umeboshi-ask: Inject ask`. Select a note type
+   and press Apply. For details, see
+   [CONTRIBUTING.md](CONTRIBUTING.md#check-panel-and-add-on-behavior-in-anki).
 
 ### 3. Point the panel at your Worker
 
@@ -76,10 +74,10 @@ The keys the panel stores:
 
 Then check the round-trip:
 
-1. Ask a question. A streaming answer comes back.
-2. Save (threads POST), rebuild the panel, and check threads GET shows it again.
-3. Change the token to a wrong value and ask.
-   A 401 shows the "check the access token in settings" guide.
+1. Ask a question and confirm a streaming answer comes back.
+2. Save (threads POST), rebuild the panel, and confirm threads GET shows it again.
+3. Change the token to a wrong value and ask. A 401 shows the
+   "check the access token in settings" guide.
 
 ## Scripts
 
@@ -108,7 +106,7 @@ For Anki use, follow Setup above instead of importing these files directly.
 ## Contributing
 
 See the [contribution guide](CONTRIBUTING.md) for questions, feature requests,
-development setup, and pull requests. Use English when participating;
+development setup, and pull requests. Participate in English;
 translation tools are welcome.
 
 ## Boundary
@@ -121,27 +119,20 @@ introduced, and stays out of the scan as a property access.
 
 ## Troubleshooting
 
-- 401: check the access token
-  in the panel settings.
-  It must match `ASK_TOKEN`.
-- Save fails: without `[[kv_namespaces]]`,
-  threads and settings cannot persist.
-  The panel falls back to local settings.
-- Chat returns 503:
-  `OPENROUTER_API_KEY` is not set.
-- Browser blocks the call: check CORS.
-  The core answers known origins only
-  (Anki Desktop, AnkiWeb, loopback
-  for AnkiDroid, and same origin).
+- 401: check the access token in the panel settings. It must match `ASK_TOKEN`.
+- Save fails: without `[[kv_namespaces]]`, threads and settings cannot persist,
+  and the panel falls back to local settings.
+- Chat returns 503: `OPENROUTER_API_KEY` is not set.
+- Browser blocks the call: check CORS. The core answers known origins only
+  (Anki Desktop, AnkiWeb, loopback for AnkiDroid, and same origin).
 
 ## FAQ
 
 - Where does my card go?
-  The panel sends the composed question to your Worker.
-  Your Worker forwards it to OpenRouter,
-  which forwards it to the selected model provider.
-  Self-host means you run the entry point yourself.
-  It does not mean the answer is made on your machine.
+  The panel sends the composed question to your Worker. Your Worker forwards it
+  to OpenRouter, which forwards it to the selected model provider. Self-hosted
+  means you run the entry point yourself; the answer itself is not made on
+  your machine.
 - Which models exist?
   The fixed bundle has 5 entries:
   `xiaomi/mimo-v2.5`,
@@ -159,7 +150,7 @@ introduced, and stays out of the scan as a property access.
 - [Suggest a feature](https://github.com/Karimuto/umeboshi-ask/issues/new?template=feature_request.md).
 - [Get self-hosting help](https://github.com/Karimuto/umeboshi-ask/issues/new?template=selfhost_help.md).
 - Use [Discussions](https://github.com/Karimuto/umeboshi-ask/discussions)
-  to share use or exchange tips.
+  to share how you use it or exchange tips.
 
 ## Hosted version
 
