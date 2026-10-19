@@ -37,6 +37,8 @@ export interface AskModel {
   defaultEffort: EffortValue | null;
   /** #66 True blocks none (OpenRouter mandatory). */
   reasoningMandatory: boolean;
+  /** Image input support. Derived from inventory architecture input modality. Bundle defaults true. */
+  supportsImages: boolean;
 }
 
 export interface ResolvedModel extends AskModel {
@@ -82,11 +84,11 @@ export function isValidEffortForModel(
  * Rewrite needs no redeploy: put an id-array JSON to KV ask:models:allowlist:v1 for instant effect
  * (npx wrangler kv:key put --binding=UMEBOSHI_KV "ask:models:allowlist:v1" '["xiaomi/mimo-v2.5",...]'). */
 export const BUNDLE_MODELS: readonly AskModel[] = [
-  { id: "xiaomi/mimo-v2.5", name: "Xiaomi: MiMo-V2.5", priceUsdPer1M: 0.14, credits: 1, smartScore: -10, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false },
-  { id: "z-ai/glm-5.3-flash", name: "Z.ai: GLM 5.3 Flash", priceUsdPer1M: 0.15, credits: 1, smartScore: 7, scores: { max: 7 }, supportedEfforts: ["max", "high", "low"], defaultEffort: "max", reasoningMandatory: true },
-  { id: "xiaomi/mimo-v2.6-pro", name: "Xiaomi: MiMo-V2.6-Pro", priceUsdPer1M: 0.435, credits: 1, smartScore: 8, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false },
-  { id: "google/gemini-3.8-flash", name: "Google: Gemini 3.8 Flash", priceUsdPer1M: 0.75, credits: 6, smartScore: 30, scores: { high: 30, medium: 29, low: 21 }, supportedEfforts: ["high", "medium", "low"], defaultEffort: "medium", reasoningMandatory: true },
-  { id: "anthropic/claude-opus-5.5", name: "Anthropic: Claude Opus 5.5", priceUsdPer1M: 4.0, credits: 31, smartScore: 46, scores: { max: 46, xhigh: 43, high: 41, medium: 40, low: 39 }, supportedEfforts: ["max", "xhigh", "high", "medium", "low"], defaultEffort: "high", reasoningMandatory: true },
+  { id: "xiaomi/mimo-v2.5", name: "Xiaomi: MiMo-V2.5", priceUsdPer1M: 0.14, credits: 1, smartScore: -10, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, supportsImages: true },
+  { id: "z-ai/glm-5.3-flash", name: "Z.ai: GLM 5.3 Flash", priceUsdPer1M: 0.15, credits: 1, smartScore: 7, scores: { max: 7 }, supportedEfforts: ["max", "high", "low"], defaultEffort: "max", reasoningMandatory: true, supportsImages: true },
+  { id: "xiaomi/mimo-v2.6-pro", name: "Xiaomi: MiMo-V2.6-Pro", priceUsdPer1M: 0.435, credits: 1, smartScore: 8, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, supportsImages: true },
+  { id: "google/gemini-3.8-flash", name: "Google: Gemini 3.8 Flash", priceUsdPer1M: 0.75, credits: 6, smartScore: 30, scores: { high: 30, medium: 29, low: 21 }, supportedEfforts: ["high", "medium", "low"], defaultEffort: "medium", reasoningMandatory: true, supportsImages: true },
+  { id: "anthropic/claude-opus-5.5", name: "Anthropic: Claude Opus 5.5", priceUsdPer1M: 4.0, credits: 31, smartScore: 46, scores: { max: 46, xhigh: 43, high: 41, medium: 40, low: 39 }, supportedEfforts: ["max", "xhigh", "high", "medium", "low"], defaultEffort: "high", reasoningMandatory: true, supportsImages: true },
 ] as const;
 
 /** #198 Four tiers (ModelTier). Tier names match the site/ model classes (basic/middle/premium) plus top ultra.
@@ -189,6 +191,8 @@ export interface CachedInventoryModel {
   defaultEffort?: EffortValue | null;
   /** #66 True blocks none. Missing reads as false. */
   reasoningMandatory?: boolean;
+  /** Image input support. Derived from inventory architecture input modality. Missing reads as false. */
+  supportsImages?: boolean;
 }
 
 export interface ModelCache {
@@ -218,7 +222,18 @@ interface InventoryEntry {
   name?: unknown;
   pricing?: unknown;
   reasoning?: unknown;
+  architecture?: unknown;
 }
+/** Derive image support from inventory architecture input modality. Only image entries read true. */
+export function parseImageModality(raw: unknown): boolean {
+  if (typeof raw !== "object" || raw === null) return false;
+  const holder = raw as Record<string, unknown>;
+  const input = holder["input"];
+  const modalities = Array.isArray(input) ? input : holder["input_modalities"];
+  if (!Array.isArray(modalities)) return false;
+  return modalities.some((m) => m === "image");
+}
+
 
 function entryPrice(entry: InventoryEntry): number {
   const pricing = entry.pricing;
@@ -245,7 +260,8 @@ export function parseInventoryPayload(payload: unknown): CachedInventoryModel[] 
     if (typeof entry.id !== "string" || entry.id === "") continue;
     const name = typeof entry.name === "string" && entry.name !== "" ? entry.name : entry.id;
     const reasoning = parseReasoningMeta(entry.reasoning);
-    out.push({ id: entry.id, name, priceUsdPer1M: entryPrice(entry), ...reasoning });
+    const supportsImages = parseImageModality(entry.architecture);
+    out.push({ id: entry.id, name, priceUsdPer1M: entryPrice(entry), ...reasoning, supportsImages });
   }
   return out;
 }
@@ -327,10 +343,10 @@ export interface ResolvedModels {
   updatedAt?: string;
 }
 
-function reasoningMetaOf(c: CachedInventoryModel): Pick<AskModel, "supportedEfforts" | "defaultEffort" | "reasoningMandatory"> {
+function reasoningMetaOf(c: CachedInventoryModel): Pick<AskModel, "supportedEfforts" | "defaultEffort" | "reasoningMandatory" | "supportsImages"> {
   const supported = Array.isArray(c.supportedEfforts) ? c.supportedEfforts.filter(isEffortValue) : [];
   const def = isEffortValue(c.defaultEffort) && supported.includes(c.defaultEffort) ? c.defaultEffort : null;
-  return { supportedEfforts: supported, defaultEffort: def, reasoningMandatory: c.reasoningMandatory === true };
+  return { supportedEfforts: supported, defaultEffort: def, reasoningMandatory: c.reasoningMandatory === true, supportsImages: c.supportsImages !== false };
 }
 
 function bundleResolved(): ResolvedModel[] {
@@ -379,8 +395,9 @@ export async function resolveModels(store?: ModelStore): Promise<ResolvedModels>
     // Then "no effort choices" would look like a broken commit.
     // Cache with reasoning meta wins. Existing cache-first behavior is unchanged.
     if (meta && cached) {
-      const cachedMeta = Array.isArray(cached.supportedEfforts) ? reasoningMetaOf(cached) : null;
-      return { ...meta, ...(cachedMeta ?? {}), selectable: true };
+      const imageMeta = cached.supportsImages === undefined ? {} : { supportsImages: cached.supportsImages };
+      const cachedMeta = Array.isArray(cached.supportedEfforts) ? reasoningMetaOf(cached) : imageMeta;
+      return { ...meta, ...(cachedMeta ?? {}), ...imageMeta, selectable: true };
     }
     if (meta) return { ...meta, selectable: true };
     return {
@@ -391,6 +408,7 @@ export async function resolveModels(store?: ModelStore): Promise<ResolvedModels>
       supportedEfforts: [],
       defaultEffort: null,
       reasoningMandatory: false,
+      supportsImages: false,
       selectable: true,
     };
   });

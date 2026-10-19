@@ -27,6 +27,22 @@ import {
 export const CHAT_MAX_TOKENS = 8192;
 export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const CHAT_QUESTION_MAX = 8000;
+/** Max images per request. png/jpeg/webp/gif only, 10MB each (post-base64). No total cap. */
+export const CHAT_IMAGES_MAX = 3;
+export const CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const CHAT_IMAGE_DATA_URL = /^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/i;
+
+/** body.images to fixed data-URL array. Missing reads empty (legacy string content). Violations read invalidImage. */
+function selectChatImages(raw: unknown): { images: string[] } | { invalidImage: true } {
+  if (raw === undefined || raw === null) return { images: [] };
+  if (!Array.isArray(raw) || raw.length > CHAT_IMAGES_MAX) return { invalidImage: true };
+  for (const item of raw) {
+    if (typeof item !== "string") return { invalidImage: true };
+    if (!CHAT_IMAGE_DATA_URL.test(item)) return { invalidImage: true };
+    if (item.length - item.indexOf(",") - 1 > CHAT_IMAGE_MAX_BYTES) return { invalidImage: true };
+  }
+  return { images: raw as string[] };
+}
 /** #35: system prompt prepended for every OpenRouter call. Behavior base. */
 export const CHAT_SYSTEM_PROMPT = `# Role
 You are a professor who is exceptionally clear and easy to understand. Based on the provided Problem Statement, Supplementary Information, and User's Question, create a response that deepens the user's understanding of their question.`;
@@ -228,6 +244,14 @@ export async function handleChat(
       { status: 400 },
     );
   }
+  const decidedImages = selectChatImages(rawBody ? rawBody["images"] : undefined);
+  if ("invalidImage" in decidedImages) {
+    return Response.json({ error: "invalid_image" }, { status: 400 });
+  }
+  const images = decidedImages.images;
+  if (images.length > 0 && modelMeta?.supportsImages === false) {
+    return Response.json({ error: "invalid_image", model }, { status: 400 });
+  }
   const requestedEffort = decidedEffort.effort;
   const openRouterKey = env.OPENROUTER_API_KEY;
   if (!openRouterKey) {
@@ -245,7 +269,16 @@ export async function handleChat(
       model: openRouterModel,
       messages: [
         { role: "system", content: CHAT_SYSTEM_PROMPT },
-        { role: "user", content: question },
+        {
+          role: "user",
+          content:
+            images.length > 0
+              ? [
+                  { type: "text", text: question },
+                  ...images.map((url) => ({ type: "image_url", image_url: { url } })),
+                ]
+              : question,
+        },
       ],
       max_tokens: CHAT_MAX_TOKENS,
       stream: true,
@@ -414,7 +447,8 @@ export async function handleChat(
   function scrubSecrets(text: string): string {
     const bearer = (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
     const escapedQuestion = JSON.stringify(question).slice(1, -1);
-    const secrets: string[] = [openRouterKey ?? "", bearer, question, escapedQuestion];
+    const secrets: string[] = [openRouterKey ?? "", bearer, question, escapedQuestion,
+      ...images.filter((url) => url.length >= 8)];
     let out = text;
     for (const secret of secrets) {
       if (secret !== "" && secret.length >= 8) out = out.split(secret).join("[redacted]");
@@ -469,6 +503,16 @@ export async function handleChat(
   const s8Fallback = cheapestSelectable(allowed)?.id ?? defaultChatModel();
   // S9 switch target (cheapest selectable besides current). Null with a single model means no switch; keep waiting as before.
   const silenceFallbackId = nextFallbackModel(allowed, model)?.id ?? null;
+  // Images ride only to image-capable targets. Never resend images to a text-only model.
+  const modelCapable = (id: string): boolean =>
+    (allowed.find((m) => m.id === id) ?? BUNDLE_MODELS.find((m) => m.id === id))?.supportsImages !== false;
+  const imageGateFallback = (id: string | null): string | null =>
+    images.length > 0 && id !== null && !modelCapable(id) ? null : id;
+  const s8ImageFallback = imageGateFallback(s8Fallback);
+  const silenceImageFallback = imageGateFallback(silenceFallbackId);
+  function imageBlocked(): Response {
+    return Response.json({ error: "invalid_image", model }, { status: 400 });
+  }
   let switched: { from: string; to: string; reason: "model_404" | "timeout"; effort: EffortValue | null } | null = null;
   function markSwitched(from: string, to: string, reason: "model_404" | "timeout"): void {
     switched = { from, to, reason, effort: effortFor(to) };
@@ -634,18 +678,22 @@ export async function handleChat(
       upstream = first.res;
       link = first.link;
       if (upstream.status === 404 && model !== s8Fallback) {
+        if (s8ImageFallback === null || model === s8ImageFallback) {
+          dropLink(link);
+          return imageBlocked();
+        }
         console.error(
           `upstream error model=${model} status=${upstream.status} body=${await previewOf(upstream)} note=s8_switch`,
         );
-        markSwitched(model, s8Fallback, "model_404");
+        markSwitched(model, s8ImageFallback, "model_404");
         dropLink(link);
-        const second = await postAttempt(s8Fallback, null);
+        const second = await postAttempt(s8ImageFallback, null);
         if (second.kind === "abort") return cancelled();
-        if (second.kind === "timeout") return upstreamError(s8Fallback, null, "timeout");
-        if (second.kind !== "ok") return upstreamError(s8Fallback, null, previewOfError(second.error));
+        if (second.kind === "timeout") return upstreamError(s8ImageFallback, null, "timeout");
+        if (second.kind !== "ok") return upstreamError(s8ImageFallback, null, previewOfError(second.error));
         upstream = second.res;
         link = second.link;
-        upstreamModel = s8Fallback;
+        upstreamModel = s8ImageFallback;
       } else if (!upstream.ok) {
         const preview = await previewOf(upstream);
         const failed = upstreamModel;
@@ -661,24 +709,29 @@ export async function handleChat(
     if (first.kind === "error") {
       return upstreamError(model, null, previewOfError(first.error));
     } else if (first.kind === "timeout") {
-      markSwitched(model, silenceFallbackId, "timeout");
-      const second = await postFallback(silenceFallbackId);
+      if (silenceImageFallback === null) return upstreamError(model, null, "timeout");
+      markSwitched(model, silenceImageFallback, "timeout");
+      const second = await postFallback(silenceImageFallback);
       if (second.kind === "abort") return cancelled();
-      if (second.kind !== "ok") return upstreamError(silenceFallbackId, null, previewOfError(second.error));
+      if (second.kind !== "ok") return upstreamError(silenceImageFallback, null, previewOfError(second.error));
       upstream = second.res;
       link = second.link;
     } else if (first.res.status === 404 && model !== s8Fallback) {
+      if (s8ImageFallback === null || model === s8ImageFallback) {
+        dropLink(first.link);
+        return imageBlocked();
+      }
       console.error(
         `upstream error model=${model} status=${first.res.status} body=${await previewOf(first.res)} note=s8_switch`,
       );
-      markSwitched(model, s8Fallback, "model_404");
+      markSwitched(model, s8ImageFallback, "model_404");
       dropLink(first.link);
-      const second = await postFallback(s8Fallback);
+      const second = await postFallback(s8ImageFallback);
       if (second.kind === "abort") return cancelled();
-      if (second.kind !== "ok") return upstreamError(s8Fallback, null, previewOfError(second.error));
+      if (second.kind !== "ok") return upstreamError(s8ImageFallback, null, previewOfError(second.error));
       upstream = second.res;
       link = second.link;
-      upstreamModel = s8Fallback;
+      upstreamModel = s8ImageFallback;
     } else {
       upstream = first.res;
       link = first.link;
@@ -697,13 +750,14 @@ export async function handleChat(
         } else if (waited.outcome === "timeout") {
           await cancelReader(waited.reader);
           dropLink(link);
-          markSwitched(model, silenceFallbackId, "timeout");
-          const second = await postFallback(silenceFallbackId);
+          if (silenceImageFallback === null) return upstreamError(model, null, "timeout");
+          markSwitched(model, silenceImageFallback, "timeout");
+          const second = await postFallback(silenceImageFallback);
           if (second.kind === "abort") return cancelled();
-          if (second.kind !== "ok") return upstreamError(silenceFallbackId, null, previewOfError(second.error));
+          if (second.kind !== "ok") return upstreamError(silenceImageFallback, null, previewOfError(second.error));
           upstream = second.res;
           link = second.link;
-          upstreamModel = silenceFallbackId;
+          upstreamModel = silenceImageFallback;
         } else if (waited.outcome === "event" || waited.outcome === "ended") {
           prefix = waited;
         }
