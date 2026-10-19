@@ -8,8 +8,15 @@ Anki の自習ヘルパー。セルフホスト用。
 Cloudflare Worker のコア、Anki のパネル、
 Anki アドオンを1つにまとめたもの。
 
-ライセンス: MIT。ホスト版
-(ログイン、支払い、同期) はこの repo に無い。
+ライセンス: MIT。
+
+## 動作条件
+
+- Node.js 24 LTS と npm と Git。
+- Wrangler 3.x (3.114.17 で動くことを確認済み)。
+- アドオンを Anki で試すなら Anki Desktop 25.09.2 以降。
+- Cloudflare アカウントはデプロイするときだけ要る。
+  手元での実行やテストには要らない。
 
 ## 内容
 
@@ -20,7 +27,7 @@ Anki アドオンを1つにまとめたもの。
 - `addon/`: Anki アドオン
 (Python、注入のみ)。
 
-## 導入 (2手順)
+## 導入 (3手順)
 
 秘密は1つだけ: OpenRouter の API キー。
 ログインは要らない。
@@ -55,7 +62,17 @@ commit しないこと。
 スレッドと設定は残らず、
 パネルは手元の設定に落ちる。
 
-### 2. パネルを Worker に向ける
+### 2. パネルを Anki に足す
+
+1. `npm run build` と `npm run build:addon` を実行する。
+   パッケージは repo 直下の `umeboshi-ask-companion.ankiaddon`。
+2. Anki で ツール > アドオン > ファイルからインストール を開き、
+   パッケージを選んで Anki を再起動する。
+3. ツール > アドオン で `umeboshi-ask: Inject ask` を選び、
+   ノートタイプを選んで適用を押す。
+   詳しくは [CONTRIBUTING.md](CONTRIBUTING.md#check-panel-and-add-on-behavior-in-anki)。
+
+### 3. パネルを Worker に向ける
 
 - Worker URL = `http://127.0.0.1:8799`
 - Access token = `ASK_TOKEN` と同じ値
@@ -83,6 +100,23 @@ threads GET に残るのを見る。
 - `npm test`: root 試験 (`node --test`)。
 - `npm run test:core`: Worker コア試験
 (`claudeflare/test/core`)。
+
+## パッケージとして使う
+
+[`@umeboshi/ask`](package.json) を依存に入れると源を使い回せる:
+
+```sh
+npm install @umeboshi/ask
+```
+
+そのまま動く JS の道具ではなく源の配布である。
+
+- `./core` (`claudeflare/src/core.ts`): Worker コアの源。
+- `./panel` (`src/components/askScaffold.ejs`): パネルの源。
+- `./addon` (`addon/inject.py`): アドオンの入口。
+- `./package.json`: パッケージ情報のみ。
+
+Anki で使うときは上の導入に従い、これらを直接読み込まないこと。
 
 ## 開発への参加
 
@@ -114,6 +148,33 @@ Worker が送るモデル単価の字段は
 コアは既知の出所にだけ答える
 (Anki Desktop、AnkiWeb、
 AnkiDroid 用の loopback、同一出所)。
+
+## よくある質問
+
+- カードはどこに送られる?
+  パネルは組み立てた質問を自分の Worker に送る。
+  自分の Worker は OpenRouter に回し、
+  OpenRouter は選んだモデルの提供先に回す。
+  セルフホストは入口を自分で動かす意味であり、
+  答えを自分の端末で作る意味では無い。
+- モデルは何がある?
+  固定の bundle で5件:
+  `xiaomi/mimo-v2.5`、
+  `z-ai/glm-5.3-flash`、
+  `xiaomi/mimo-v2.6-pro`、
+  `google/gemini-3.8-flash`、
+  `anthropic/claude-opus-5.5`。
+- 保存には何が要る?
+  `ASK_TOKEN` と KV の紐づけ。
+  無いときはスレッドと設定は端末内だけに残る。
+
+## 助けを求める
+
+- [不具合の報告](https://github.com/Karimuto/umeboshi-ask/issues/new?template=bug_report.md)。
+- [機能の提案](https://github.com/Karimuto/umeboshi-ask/issues/new?template=feature_request.md)。
+- [セルフホストの困りごと](https://github.com/Karimuto/umeboshi-ask/issues/new?template=selfhost_help.md)。
+- [Discussions](https://github.com/Karimuto/umeboshi-ask/discussions)
+  で使い方の共有や利用者どうしの意見交換。
 
 ## ホスト版
 

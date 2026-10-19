@@ -92,7 +92,7 @@ Use Anki Desktop 25.09.2 or later and a separate test profile.
 4. Review a card of that note type and show its answer.
    Check that the panel appears, then exercise the behavior you changed.
    For Worker setup and a chat/save round-trip, follow
-   [Setup in the README](README.md#setup-2-steps).
+   [Setup in the README](README.md#setup-3-steps).
 5. Include the Anki version, operating system, steps, and observed result
    in your PR. For a visible change, include a screenshot.
 
