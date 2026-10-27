@@ -598,3 +598,207 @@ describe("OpenRouter単線 (ADR 0015)", () => {
     expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
   });
 });
+
+function upstreamUserMessages(init: RequestInit): { role: string; content: unknown }[] {
+  if (typeof init.body !== "string") throw new Error("upstream body is not a string");
+  const sent: unknown = JSON.parse(init.body);
+  if (!sent || typeof sent !== "object" || !("messages" in sent)) throw new Error("no messages");
+  const messages = sent.messages;
+  if (!Array.isArray(messages)) throw new Error("messages is not an array");
+  return messages as { role: string; content: unknown }[];
+}
+
+function upstreamModel(init?: RequestInit): string {
+  if (!init || typeof init.body !== "string") throw new Error("upstream body is not a string");
+  const sent: unknown = JSON.parse(init.body);
+  if (!sent || typeof sent !== "object" || !("model" in sent)) throw new Error("no model");
+  const model = sent.model;
+  if (typeof model !== "string") throw new Error("model is not a string");
+  return model;
+}
+describe("images field", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+
+  it("images ride upstream as text+image_url parts", async () => {
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleChat(postChat({ question: "Q", images: [PNG] }), env, fetch);
+    expect(res.status).toBe(200);
+    await res.text().catch(() => undefined);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const messages = upstreamUserMessages(init);
+    expect(messages[0]).toMatchObject({ role: "system", content: CHAT_SYSTEM_PROMPT });
+    expect(messages[1]).toMatchObject({
+      role: "user",
+      content: [
+        { type: "text", text: "Q" },
+        { type: "image_url", image_url: { url: PNG } },
+      ],
+    });
+  });
+
+  it("no images keeps the legacy string content", async () => {
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleChat(postChat({ question: "Q" }), env, fetch);
+    expect(res.status).toBe(200);
+    await res.text().catch(() => undefined);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const messages = upstreamUserMessages(init);
+    expect(messages[1]).toMatchObject({ role: "user", content: "Q" });
+  });
+
+  it("4th image, oversize, and foreign MIME read 400 invalid_image", async () => {
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const big = "data:image/png;base64," + "A".repeat(10 * 1024 * 1024 + 1);
+    for (const images of [
+      [PNG, PNG, PNG, PNG],
+      [big],
+      ["data:image/bmp;base64,AAAA"],
+      ["data:text/plain;base64,AAAA"],
+      ["not-a-data-url"],
+    ]) {
+      const res = await handleChat(postChat({ question: "Q", images }), env, fetch);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "invalid_image" });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("images on an incapable model read 400", async () => {
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const blocked = [{ ...BUNDLE_MODELS[0]!, supportsImages: false, selectable: true }];
+    const res = await handleChat(postChat({ question: "Q", images: [PNG] }), env, fetch, {
+      models: blocked,
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_image" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("image bytes stay out of logs and responses", async () => {
+    const seen: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      seen.push(args.map((a) => String(a)).join(" "));
+    });
+    try {
+      const detail = JSON.stringify({ error: { message: "bad", echo: PNG } });
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(detail, { status: 400 })));
+      const res = await handleChat(postChat({ question: "Q", images: [PNG] }), env, fetch);
+      expect(res.status).toBe(502);
+      const body = JSON.stringify(await res.json());
+      expect(body).not.toContain("iVBORw0KGgo");
+      expect(seen.join("\n")).not.toContain("iVBORw0KGgo");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("unknown keys still ride alongside images", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+      ),
+    );
+    const res = await handleChat(
+      postChat({ question: "Q", images: [PNG], legacy_flag: true }),
+      env,
+      fetch,
+    );
+    expect(res.status).toBe(200);
+    await res.text().catch(() => undefined);
+  });
+
+  it("S8 switch never resends images to an incapable target", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        sent.push(upstreamModel(init));
+        return new Response("no such model", { status: 404 });
+      }),
+    );
+    const models = BUNDLE_MODELS.map((m) => ({ ...m, selectable: true }));
+    const cheap = { ...models[0]!, supportsImages: false };
+    const current = { ...models[models.length - 1]!, supportsImages: true };
+    const allowed = [cheap, current];
+    const res = await handleChat(
+      postChat({ model: current.id, question: "Q", images: [PNG] }),
+      env,
+      fetch,
+      { models: allowed },
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_image" });
+    // The first post to the requested model is legitimate; only the resend
+    // to the fallback must never happen.
+    expect(sent).toEqual([current.id]);
+  });
+
+  it("S8 404 with images skips an incapable cheapest fallback for the next capable one", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        sent.push(upstreamModel(init));
+        if (sent.length === 1) return new Response("no such model", { status: 404 });
+        return sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]);
+      }),
+    );
+    const models = BUNDLE_MODELS.map((m) => ({ ...m, selectable: true }));
+    const cheap = { ...models[0]!, supportsImages: false };
+    const capableSecond = { ...models[1]!, supportsImages: true };
+    const current = { ...models[models.length - 1]!, supportsImages: true };
+    const res = await handleChat(
+      postChat({ model: current.id, question: "Q", images: [PNG] }),
+      env,
+      fetch,
+      { models: [cheap, capableSecond, current] },
+    );
+    expect(res.status).not.toBe(400);
+    expect(sent).toEqual([current.id, capableSecond.id]);
+    await res.text().catch(() => undefined);
+  });
+
+  it("S9 switch never resends images to an incapable target", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        calls.push(upstreamModel(init));
+        if (calls.length === 1) {
+          return new Response(new ReadableStream<Uint8Array>({}), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        }
+        return new Response("fallback must not run", { status: 500 });
+      }),
+    );
+    const models = BUNDLE_MODELS.map((m) => ({ ...m, selectable: true }));
+    const cheap = { ...models[0]!, supportsImages: false };
+    const current = { ...models[1]!, supportsImages: true };
+    const res = await handleChat(
+      postChat({ model: current.id, question: "Q", images: [PNG] }),
+      env,
+      fetch,
+      { models: [cheap, current], timeoutMs: 20 },
+    );
+    // Silence must not resend images to the incapable fallback: only the
+    // requested model is ever posted, whatever the stream outcome is.
+    expect(calls).toEqual([current.id]);
+    await res.text().catch(() => undefined);
+    expect(res.status).not.toBe(500);
+  });
+});

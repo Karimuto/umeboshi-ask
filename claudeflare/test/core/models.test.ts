@@ -10,8 +10,11 @@ import {
   defaultEffortFor,
   isValidEffortForModel,
   nextFallbackModel,
+  parseImageModality,
+  parseInventoryPayload,
   parseReasoningMeta,
   parseSupportedEfforts,
+  resolveModels,
   sortCheapFirst,
 } from "../../src/models";
 
@@ -190,9 +193,9 @@ describe("#72 AA-Omniscienceスコア", () => {
 describe("S8 選択可否の純粋関数 (S10が残高と繋ぐ)", () => {
   it("cheapestSelectableは安い順で最初の選択可を返す", () => {
     const models = [
-      { id: "a", name: "a", priceUsdPer1M: 3, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, selectable: false },
-      { id: "b", name: "b", priceUsdPer1M: 1, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, selectable: true },
-      { id: "c", name: "c", priceUsdPer1M: 0.1, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, selectable: false },
+      { id: "a", name: "a", priceUsdPer1M: 3, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, supportsImages: true, selectable: false },
+      { id: "b", name: "b", priceUsdPer1M: 1, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, supportsImages: true, selectable: true },
+      { id: "c", name: "c", priceUsdPer1M: 0.1, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, supportsImages: true, selectable: false },
     ];
     expect(cheapestSelectable(models)?.id).toBe("b");
     expect(cheapestSelectable([])).toBeNull();
@@ -200,9 +203,9 @@ describe("S8 選択可否の純粋関数 (S10が残高と繋ぐ)", () => {
 
   it("nextFallbackModelは現行以外の安い選択可を返す・無ければnull", () => {
     const models = [
-      { id: "cheap", name: "cheap", priceUsdPer1M: 0.1, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, selectable: true },
-      { id: "mid", name: "mid", priceUsdPer1M: 0.5, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, selectable: false },
-      { id: "high", name: "high", priceUsdPer1M: 1, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, selectable: true },
+      { id: "cheap", name: "cheap", priceUsdPer1M: 0.1, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, supportsImages: true, selectable: true },
+      { id: "mid", name: "mid", priceUsdPer1M: 0.5, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, supportsImages: true, selectable: false },
+      { id: "high", name: "high", priceUsdPer1M: 1, smartScore: 0, supportedEfforts: [], defaultEffort: null, reasoningMandatory: false, supportsImages: true, selectable: true },
     ];
     expect(nextFallbackModel(models, "cheap")?.id).toBe("high");
     expect(nextFallbackModel(models, "high")?.id).toBe("cheap");
@@ -275,5 +278,42 @@ describe("#66 Effort取り揃え", () => {
     expect(isValidEffortForModel(opus, "minimal")).toBe(false);
     const mimo = BUNDLE_MODELS.find((m) => m.id === "xiaomi/mimo-v2.5")!;
     expect(isValidEffortForModel(mimo, "low")).toBe(false);
+  });
+});
+
+describe("image support flag", () => {
+  it("the 5-model bundle defaults to image-capable", () => {
+    expect(BUNDLE_MODELS.length).toBe(5);
+    for (const m of BUNDLE_MODELS) expect(m.supportsImages).toBe(true);
+  });
+
+  it("parseImageModality reads image input modality only", () => {
+    expect(parseImageModality({ input: ["text", "image"] })).toBe(true);
+    expect(parseImageModality({ input: ["text"] })).toBe(false);
+    expect(parseImageModality(null)).toBe(false);
+    expect(parseImageModality({})).toBe(false);
+  });
+
+  it("parseInventoryPayload carries image support", () => {
+    const out = parseInventoryPayload({
+      data: [
+        { id: "m/img", architecture: { input_modalities: ["text", "image"] } },
+        { id: "m/txt", architecture: { input_modalities: ["text"] } },
+      ],
+    });
+    expect(out[0]).toMatchObject({ id: "m/img", supportsImages: true });
+    expect(out[1]).toMatchObject({ id: "m/txt", supportsImages: false });
+  });
+
+  it("resolveModels defaults unknown allowlist ids to image-capable", async () => {
+    const store = {
+      get: async () => JSON.stringify(["some-unknown-id"]),
+      put: async () => {},
+      del: async () => {},
+    };
+    const resolved = await resolveModels(store);
+    expect(resolved.source).toBe("allowlist");
+    expect(resolved.models).toHaveLength(1);
+    expect(resolved.models[0]).toMatchObject({ id: "some-unknown-id", supportsImages: true });
   });
 });

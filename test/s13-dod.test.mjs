@@ -34,6 +34,7 @@ const BUILT_HTML = SRC("addon/templates/inject.html");
 const BUILT_HOST_HTML = buildPanel(REPO, { module: HAS_MODULE });
 
 const IDS = [
+  "umeboshi-ask",
   "umeboshi-ask-auth-status", "umeboshi-ask-account-status", "umeboshi-ask-addon-guide",
   "umeboshi-ask-login-btn", "umeboshi-ask-logout-btn", "umeboshi-ask-redeem-row",
   "umeboshi-ask-code-input", "umeboshi-ask-redeem-btn", "umeboshi-ask-export-btn",
@@ -116,6 +117,7 @@ class FakeEl {
   getAttribute(k) { return this["attr_" + k] ?? null; }
   removeAttribute(k) { delete this["attr_" + k]; if (k === "disabled") this.disabled = false; }
   querySelector() { return null; }
+  contains(el) { return (this.children || []).indexOf(el) >= 0; }
   querySelectorAll() { return []; }
   scrollIntoView() {}
   get classList() {
@@ -195,6 +197,8 @@ async function drive(opts = {}) {
     localInit = {},
     ua = "",
     panels = [],
+    // Back-document imgs, in document order. own=true marks the panel's own container.
+    cardImgs = [],
     // #127 origin-change probe. port = card origin port, cookieInit = previous port.
     port = "",
     cookieInit = "",
@@ -216,6 +220,7 @@ async function drive(opts = {}) {
   els["umeboshi-ask-effort-popup"].hidden = true;
   els["umeboshi-ask-tier-popup"].hidden = true;
   els["raw-text"].textContent = rawText;
+  for (const img of cardImgs) if (img && img.own) els["umeboshi-ask"].appendChild(img);
 
   const local = makeMemory({ ...localInit });
   const calls = [];
@@ -258,6 +263,7 @@ async function drive(opts = {}) {
           ? panels.flatMap((w) => w.items)
           : panels.map((w) => w.panel);
       }
+      if (sel === "img") return cardImgs;
       return [];
     },
     querySelector: () => null,
@@ -276,7 +282,7 @@ async function drive(opts = {}) {
   };
   const sandbox = {
     console, Promise, JSON, Date, Math, Object, Array, String, Number, Boolean, RegExp, Error,
-    setTimeout, clearTimeout, TextDecoder, AbortController,
+    setTimeout, clearTimeout, TextDecoder, AbortController, Uint8Array, ArrayBuffer, btoa,
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -1893,5 +1899,193 @@ describe("#134 英語UIに日本語を残さないゲート", () => {
       found.push(line + "行目: " + value.slice(0, 60));
     }
     assert.deepEqual(found, [], "素の和文は LOCALES に置く。gate1/2 では拾えない");
+  });
+});
+
+// Card images ride on the question: the panel auto-extracts Back-document imgs
+// and sends them to the Worker. Scope is every img in the Back document except
+// the panel's own container. Doc order, max 3. Same src dedupes. External
+// http(s) src and broken images drop silent. fetch to bytes to data URL.
+// No client-side resize or re-encode. no canvas/re-encode in this file.
+describe("image context: auto-extract Back imgs and send them", () => {
+  // FakeEl img rows. own=true marks the panel's own container.
+  const fakeImg = (src, own = false) => ({ getAttribute: (k) => (k === "src" ? src : null), own });
+  const DATAURL = "data:image/png;base64,iVBORw0KGgo=";
+  // Same-origin image bytes. grill Q6: fetch returns bytes.
+  const imgBytes = () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([137, 80, 78, 71]).buffer });
+  const modelsOk = async (url) => {
+    if (url.endsWith("/api/ask/models")) return resp(200, { models: [{ id: "m-img", name: "Img", supportsImages: true }] });
+    return null;
+  };
+  const chatOk = async (url) => {
+    if (url.endsWith("/api/ask/chat")) return sseResp([sseLine({ type: "done" })]);
+    return null;
+  };
+  const both = (extra) => async (url, init) => (await modelsOk(url)) ?? (await chatOk(url)) ?? (extra ? extra(url, init) : null);
+
+  it("a card with imgs sends images", async () => {
+    const img = fakeImg("pic1.png");
+    const h = await drive({ consent: true, cardImgs: [img], onFetch: both(async (url) => (url.includes("pic1.png") ? imgBytes() : null)) });
+    await h.ask("why");
+    const b = h.chatBody();
+    assert.ok(Array.isArray(b.images), "no images: " + JSON.stringify(b));
+    assert.equal(b.images.length, 1);
+    assert.ok(b.images[0].startsWith("data:image/png;base64,"), "not a data URL: " + b.images[0]);
+  });
+
+  it("svg/extensionless fail on bytes and never become data URLs", async () => {
+    const svgBytes = () => ({ ok: true, status: 200, arrayBuffer: async () => new TextEncoder().encode("<svg></svg>").buffer });
+    const noextBytes = () => ({ ok: true, status: 200, arrayBuffer: async () => new Uint8Array([137, 80, 78, 71]).buffer });
+    const h = await drive({ consent: true, cardImgs: [fakeImg("x.svg"), fakeImg("noext"), fakeImg("ok.png")],
+      onFetch: both(async (url) => {
+        if (url.includes("x.svg")) return svgBytes();
+        if (url.includes("noext")) return noextBytes();
+        return imgBytes();
+      }) });
+    await h.ask("why");
+    const b = h.chatBody();
+    assert.ok(Array.isArray(b.images), "no images: " + JSON.stringify(b));
+    assert.equal(b.images.length, 2);
+    assert.ok(b.images[0].startsWith("data:image/png;base64,"));
+    assert.ok(b.images[1].startsWith("data:image/png;base64,"));
+  });
+
+  it("a data-URL img rides as-is (minus the panel's own)", async () => {
+    const h = await drive({ consent: true, cardImgs: [fakeImg(DATAURL)], onFetch: both(async () => imgBytes()) });
+    await h.ask("why");
+    const b = h.chatBody();
+    assert.ok(Array.isArray(b.images), "data-URL image missing: " + JSON.stringify(b));
+    assert.equal(b.images.length, 1);
+    assert.equal(b.images[0], DATAURL);
+  });
+
+  it("a 4+ card sends only the first 3", async () => {
+    const imgs = [fakeImg("p1.png"), fakeImg("p2.png"), fakeImg("p3.png"), fakeImg("p4.png")];
+    const seen = [];
+    const h = await drive({ consent: true, cardImgs: imgs, onFetch: both(async (url) => { seen.push(url); return imgBytes(); }) });
+    await h.ask("why");
+    assert.equal(h.chatBody().images.length, 3);
+    assert.ok(!seen.some((u) => u.includes("p4.png")), "fetched the 4th: " + seen);
+  });
+
+  it("imgs inside the panel's own container never ride", async () => {
+    const own = fakeImg("own.png", true);
+    const h = await drive({ consent: true, cardImgs: [own], onFetch: both(async (url) => (url.includes("own.png") ? imgBytes() : null)) });
+    await h.ask("why");
+    assert.ok(!("images" in h.chatBody()), "own image rode: " + JSON.stringify(h.chatBody()));
+  });
+
+  it("external and broken skip, dupes bundle", async () => {
+    const imgs = [fakeImg("a.png"), fakeImg("a.png"), fakeImg("https://x.example/b.png"), fakeImg("broken.png")];
+    const fetched = [];
+    const h = await drive({ consent: true, cardImgs: imgs, onFetch: both(async (url) => {
+      if (/\.(png|jpg|jpeg|gif|webp)$/.test(url) || url.includes("broken.png") || url.includes("x.example")) fetched.push(url);
+      if (url.includes("broken.png")) throw new Error("broken");
+      return imgBytes();
+    }) });
+    await h.ask("why");
+    assert.equal(h.chatBody().images.length, 1);
+    assert.ok(!fetched.some((u) => u.includes("x.example")), "fetched external: " + fetched);
+    assert.deepEqual(fetched, ["a.png", "broken.png"], "dupe fetched twice: " + fetched);
+  });
+
+  it("a passive indicator reads out", async () => {
+    const img = fakeImg("pic1.png");
+    const h = await drive({ consent: true, cardImgs: [img], onFetch: both(async () => imgBytes()) });
+    await h.ask("why");
+    assert.match(h.els["umeboshi-ask-stream-q"].textContent, /（画像1枚を添付）/);
+  });
+
+  it("the save button keeps only the sent message's count", async () => {
+    const img = fakeImg("pic1.png");
+    let savedBody = null;
+    const h = await drive({ consent: true, cardImgs: [img], localInit: { "umeboshi-ask:worker-token:v1": "t" }, onFetch: async (url, init) => {
+      const r = await redeemOK()(url, init);
+      if (r) return r;
+      if (url.endsWith("/api/ask/models")) return resp(200, { models: [{ id: "m-img", name: "Img", supportsImages: true }] });
+      if (url.includes("pic1.png")) return imgBytes();
+      if (url.endsWith("/api/ask/chat")) return sseResp([sseLine({ type: "content", delta: "答え" }), sseLine({ type: "done" })]);
+      if (url.includes("/api/ask/threads/") && init?.method === "POST") {
+        savedBody = JSON.parse(init.body);
+        return resp(200, { message: { id: "m1", question: savedBody.question, answer: savedBody.answer } });
+      }
+      return null;
+    } });
+    await h.ask("why");
+    // The panel save button wires straight to UmeboshiAskThread.save. Count binds per message.
+    h.sandbox.UmeboshiAskThread.save("?", "A.", null, 1);
+    await tick(12);
+    assert.ok(savedBody, "no save ran");
+    assert.match(savedBody.question, /\[画像1枚\]/);
+    // A messageless send passes 0. Never dragged by the first message's count.
+    savedBody = null;
+    h.sandbox.UmeboshiAskThread.save("?", "B.", null, 0);
+    await tick(12);
+    assert.ok(savedBody, "second save never ran");
+    assert.ok(!/\[画像/.test(savedBody.question), "count leaked into an imageless save: " + savedBody.question);
+  });
+
+  it("an incapable model plus images blocks with guidance", async () => {
+    const img = fakeImg("pic1.png");
+    const h = await drive({ consent: true, cardImgs: [img], onFetch: async (url) => {
+      if (url.endsWith("/api/ask/models")) return resp(200, { models: [{ id: "m-text", name: "Text", supportsImages: false }] });
+      if (url.endsWith("/api/ask/chat")) return sseResp([sseLine({ type: "done" })]);
+      return imgBytes();
+    } });
+    await tick(12);
+    await h.ask("why");
+    assert.equal(h.chatCalls().length, 0, "sent without a block");
+    assert.match(h.els["umeboshi-ask-stream-status"].textContent, /画像に対応したモデル/);
+  });
+
+  it("no bytes stay in the save layer (KV write, idb mirror)", async () => {
+    const img = fakeImg("pic1.png");
+    const h = await drive({ consent: true, cardImgs: [img], localInit: { "umeboshi-ask:worker-token:v1": "t" }, onFetch: async (url, init) => {
+      const r = await redeemOK()(url, init);
+      if (r) return r;
+      if (url.endsWith("/api/ask/models")) return resp(200, { models: [{ id: "m-img", name: "Img", supportsImages: true }] });
+      if (url.includes("pic1.png")) return imgBytes();
+      if (url.endsWith("/api/ask/chat")) return sseResp([sseLine({ type: "content", delta: "答え" }), sseLine({ type: "done" })]);
+      if (url.includes("/api/ask/threads/") && init?.method === "POST") {
+        const b = JSON.parse(init.body);
+        return resp(200, { message: { id: "m1", question: b.question, answer: b.answer } });
+      }
+      return null;
+    } });
+    await h.ask("why");
+    h.sandbox.UmeboshiAskThread.save("?", "A.", null, 1);
+    await tick(12);
+    // No bytes in any KV-write POST body.
+    for (const p of h.threadsPosts()) {
+      assert.ok(!JSON.stringify(JSON.parse(p.init.body)).includes("data:image/"), "bytes in a KV write: " + p.url);
+    }
+    // No bytes in the idb mirror (getMessages). Only the [1 image] mark.
+    const msgs = h.sandbox.UmeboshiAskThread.getMessages();
+    assert.ok(msgs.length > 0, "no save visible");
+    assert.ok(!JSON.stringify(msgs).includes("data:image/"), "bytes left in the idb mirror");
+    assert.match(msgs[0].question, /\[画像1枚\]/);
+  });
+
+  it("a saved Q&A keeps only [N images]", async () => {
+    const img = fakeImg("pic1.png");
+    let savedBody = null;
+    const h = await drive({ consent: true, cardImgs: [img], localInit: { "umeboshi-ask:worker-token:v1": "t" }, onFetch: async (url, init) => {
+      const r = await redeemOK()(url, init);
+      if (r) return r;
+      if (url.endsWith("/api/ask/models")) return resp(200, { models: [{ id: "m-img", name: "Img", supportsImages: true }] });
+      if (url.includes("pic1.png")) return imgBytes();
+      if (url.endsWith("/api/ask/chat")) return sseResp([sseLine({ type: "content", delta: "答え" }), sseLine({ type: "done" })]);
+      if (url.includes("/api/ask/threads/") && init?.method === "POST") {
+        savedBody = JSON.parse(init.body);
+        return resp(200, { message: { id: "m1", question: savedBody.question, answer: savedBody.answer } });
+      }
+      return null;
+    } });
+    await h.ask("why");
+    h.sandbox.UmeboshiAskThread.save("?", "A.", null, 1);
+    await tick(12);
+    assert.ok(savedBody, "no save ran");
+    assert.match(savedBody.question, /\[画像1枚\]/);
+    assert.ok(!JSON.stringify(savedBody).includes("data:image/"), "image bytes rode the save");
   });
 });

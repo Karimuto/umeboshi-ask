@@ -658,6 +658,7 @@
     for (var i = 0; i < list.length; i++) fn(list[i], i);
   }
   function trim(s) { return (s || "").replace(/^\s+|\s+$/g, ""); }
+  function numOrZero(v) { return (typeof v === "number") ? v : 0; }
 
   function storeArea() {
     try { if (root && root.localStorage) return root.localStorage; } catch (e) {}
@@ -809,6 +810,9 @@
       sendFailFetch: "この環境では送信できません（fetch不可）。",
       sendFailUnknown: "エラー: 未知のモデルのため切り替えました。もう一度送信してください",
       sendFail: "送信できませんでした (",
+      imageAttached: "（画像__N__枚を添付）", imageSaved: "[画像__N__枚]",
+      imageBlocked: "このモデルは画像に対応していません。画像に対応したモデルを選んでください",
+      imageInvalid: "画像を送れませんでした。3枚まで・10MBまで・png/jpeg/webp/gifにしてください",
       searchNone: "に一致する設定はありません", searchFound: " 見つかりました", searchResults: "検索結果",
       itemFallback: "設定", detailBack: "← "
     },
@@ -885,6 +889,9 @@
       sendFailFetch: "Cannot send here (fetch unavailable).",
       sendFailUnknown: "Error: switched from an unknown model. Please send again",
       sendFail: "Failed to send (",
+      imageAttached: " (__N__ images attached)", imageSaved: "[__N__ images]",
+      imageBlocked: "This model cannot read images. Choose a model that supports images",
+      imageInvalid: "Could not send the images. Use up to 3, 10MB each, png/jpeg/webp/gif",
       searchNone: " — no matching settings", searchFound: " found", searchResults: "Search results",
       itemFallback: "Settings", detailBack: "← "
     }
@@ -2525,7 +2532,8 @@
     });
   }
   /* ---------- CurrentChat -> save (one at a time. thinking never sent) ---------- */
-  function saveOneMessage(question, answer, btn) {
+  /* Image count binds per sent message. Legacy 3-arg callers record 0. */
+  function saveOneMessage(question, answer, btn, imageCount) {
     var cardId = threadCardId();
     if (!isCardIdOk(cardId)) {
       setThreadStatus(txNow().threadNoCard);
@@ -2541,13 +2549,16 @@
       return;
     }
     if (trim(question) === "") { setThreadStatus(txNow().threadEmptyQ); return; }
-    if ((question.length + answer.length) > THREAD_MSG_CHARS) {
+    var saveQuestion = question;
+    var saveN = numOrZero(imageCount);
+    if (saveN > 0) saveQuestion = question + txNow().imageSaved.replace("__N__", String(saveN));
+    if ((saveQuestion.length + answer.length) > THREAD_MSG_CHARS) {
       setThreadStatus(txNow().threadTooLong);
       return;
     }
     if (btn) btn.disabled = true;
     setThreadStatus(txNow().threadSaving);
-    kvSave(cardId, question, answer).then(function(body) {
+    kvSave(cardId, saveQuestion, answer).then(function(body) {
       var msg = body && body.message ? body.message : null;
       if (!msg || !msg.id) throw new Error("bad response");
       savedMessages.push(msg);
@@ -2572,7 +2583,7 @@
       setThreadStatus(txNow().threadSaveFail);
     });
   }
-  function currentMessageNode(question, answer, thinking, interrupted) {
+  function currentMessageNode(question, answer, thinking, interrupted, imageCount) {
     var box = byId("umeboshi-ask-messages");
     if (!box) return;
     var wrap = document.createElement("div");
@@ -2611,7 +2622,8 @@
     var save = document.createElement("button");
     save.type = "button";
     setIconText(save, txNow().iconSave, txNow().threadSave);
-    save.addEventListener("click", function() { saveOneMessage(question, answer, save); });
+    var savedN = numOrZero(imageCount);
+    save.addEventListener("click", function() { saveOneMessage(question, answer, save, savedN); });
     row.appendChild(save);
     wrap.appendChild(q);
     if (th) wrap.appendChild(th);
@@ -2698,6 +2710,7 @@
   var streamAbort = null;
   var streaming = false;
   var currentQuestion = "";
+  var currentImageCount = 0;
   var currentThinking = "";
   var switchedShown = false;
   function setStreamStatus(t) { if (streamStatus) streamStatus.textContent = t || ""; }
@@ -2711,7 +2724,8 @@
     if (thinkingBox) { thinkingBox.hidden = true; thinkingBox.open = false; }
     if (currentBox) currentBox.hidden = false;
     var qEl = byId("umeboshi-ask-stream-q");
-    if (qEl) qEl.textContent = q || "";
+    var qImgN = numOrZero(currentImageCount);
+    if (qEl) qEl.textContent = (q || "") + (qImgN > 0 ? txNow().imageAttached.replace("__N__", String(qImgN)) : "");
     switchedShown = false;
     setStreamStatus("");
   }
@@ -2729,6 +2743,144 @@
   function cardField(id) {
     var el = byId(id);
     return el && el.textContent ? trim(el.textContent) : "";
+  }
+  /* Card images ride on the question: Back-document imgs, own panel container excluded,
+     doc order, max 3, deduped, external/broken skipped. fetch to bytes to data URL.
+     No client-side resize or re-encode. */
+  function cardImageSendable(src) {
+    if (typeof src !== "string" || src === "") return false;
+    var s = trim(src);
+    if (/^https?:\/\//i.test(s)) return false;
+    return true;
+  }
+  /* Image caps. Same gate as the Worker (at most 3 images, 10MB each post-base64). */
+  var IMG_MAX = 3, IMG_SCAN_MAX = 12, IMG_B64_MAX = 10 * 1024 * 1024;
+  /* Data-URL MIME and size. Same gate as the Worker. Others are dropped. */
+  function dataUrlImageSendable(src) {
+    if (!/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(src)) return false;
+    var b64len = src.length - src.indexOf(",") - 1;
+    if (b64len > IMG_B64_MAX) return false;
+    return true;
+  }
+  /* Card Back imgs. Excludes the panel's own container. Scans the first 12
+     sendable-shaped srcs in doc order; the fetch caps at the first 3 sendable. */
+  function cardImageList() {
+    var out = [];
+    try {
+      var box = byId("umeboshi-ask");
+      var imgs = (typeof document !== "undefined" && document.querySelectorAll)
+        ? document.querySelectorAll("img") : [];
+      for (var i = 0; i < imgs.length; i++) {
+        var el = imgs[i];
+        try { if (box && box.contains && box.contains(el)) continue; } catch (eSkip) {}
+        var src = "";
+        try { src = el.getAttribute ? el.getAttribute("src") : ""; } catch (eSrc) { src = ""; }
+        if (!cardImageSendable(src)) continue;
+        if (out.indexOf(src) >= 0) continue;
+        out.push(src);
+        if (out.length >= IMG_SCAN_MAX) break;
+      }
+    } catch (e) {}
+    return out;
+  }
+  /* bytes to data URL. Magic-number MIME (extension unseen). Unknown MIME reads null. */
+  function imageMimeOfBytes(bytes) {
+    var b = bytes || [];
+    var n = function(i) { return (i < b.length) ? (b[i] & 255) : -1; };
+    if (n(0) === 137 && n(1) === 80 && n(2) === 78 && n(3) === 71) return "image/png";
+    if (n(0) === 255 && n(1) === 216 && n(2) === 255) return "image/jpeg";
+    if (n(0) === 71 && n(1) === 73 && n(2) === 70 && n(3) === 56) return "image/gif";
+    if (n(0) === 82 && n(1) === 73 && n(2) === 70 && n(3) === 70 && n(8) === 87 && n(9) === 69 && n(10) === 66 && n(11) === 80) return "image/webp";
+    return null;
+  }
+  function imageBytesToDataUrl(bytes) {
+    var mime = imageMimeOfBytes(bytes);
+    if (!mime) return null;
+    var bin = "";
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    var b64 = "";
+    if (typeof btoa !== "undefined") b64 = btoa(bin);
+    else if (typeof Buffer !== "undefined") b64 = Buffer.from(bin, "binary").toString("base64");
+    return "data:" + mime + ";base64," + b64;
+  }
+  /* same-origin fetch to bytes to data URL. External/broken fail silent.
+     signal aborts: the chain rejects with AbortError for the caller stop/resend. */
+  function fetchCardImages(srcs, signal) {
+    var f = netFetch();
+    var out = [];
+    if (!f || !srcs || srcs.length === 0) return Promise.resolve(out);
+    var chain = Promise.resolve();
+    var aborted = false;
+    var stepReject = null;
+    function abortStep() {
+      aborted = true;
+      if (stepReject) { try { var eA = new Error("aborted"); eA.name = "AbortError"; stepReject(eA); } catch (eI) {} stepReject = null; }
+    }
+    if (signal) {
+      if (signal.aborted) aborted = true;
+      else if (signal.addEventListener) signal.addEventListener("abort", abortStep, { once: true });
+    }
+    srcs.forEach(function(src) {
+      chain = chain.then(function() {
+        if (aborted || (signal && signal.aborted)) {
+          var e0 = new Error("aborted");
+          e0.name = "AbortError";
+          throw e0;
+        }
+        if (out.length >= IMG_MAX) return;
+        /* data URLs ride as-is: no fetch. MIME/size outside the gate drop silent. */
+        if (/^data:image\//i.test(src)) {
+          if (out.length < IMG_MAX && dataUrlImageSendable(src)) out.push(src);
+          return;
+        }
+        var opts = (signal && typeof signal.aborted === "boolean") ? { signal: signal } : undefined;
+        var p = new Promise(function(resolveStep, rejectStep) {
+          stepReject = rejectStep;
+          if (aborted || (signal && signal.aborted)) { abortStep(); return; }
+          function doneStep(v) { stepReject = null; resolveStep(v); }
+          function failStep(e) { stepReject = null; rejectStep(e); }
+          try {
+            var inner = f(src, opts);
+            if (inner && inner.then) inner.then(doneStep, failStep);
+            else doneStep(inner);
+          } catch (eCall) { failStep(eCall); }
+        });
+        if (p && p.then) p = p.then(function(res) {
+          if (aborted || (signal && signal.aborted)) {
+            var e1 = new Error("aborted");
+            e1.name = "AbortError";
+            throw e1;
+          }
+          if (out.length >= IMG_MAX) return;
+          return res;
+        }, function(passErr) { throw passErr; });
+        return p.then(function(res) {
+          if (out.length >= IMG_MAX) return;
+          if (!res || !res.ok || res.status >= 400) return;
+          return res.arrayBuffer().then(function(buf) {
+            var url = imageBytesToDataUrl(new Uint8Array(buf));
+            if (url && out.length < IMG_MAX) out.push(url);
+          }, function() {});
+        }, function(fetchErr) {
+          /* abort rides back up the chain. Broken images alone drop silent. */
+          if (aborted || (signal && signal.aborted)) throw fetchErr;
+        });
+      });
+    });
+    /* prefetch-time AbortError rides to the caller stop/resend. */
+    return chain.then(function() { return out; }, function(chainErr) {
+      if (chainErr && chainErr.name === "AbortError") throw chainErr;
+      return out;
+    });
+  }
+  /* Image-capable model check. Old responses without the flag read capable. */
+  function modelSupportsImages(id) {
+    try {
+      var m = (typeof modelById === "function") ? modelById(id) : null;
+      if (!m) return true;
+      if (m.supportsImages === false) return false;
+    } catch (e) {}
+    return true;
   }
   function buildClozeInfo(raw) {
     var num = cardNum();
@@ -2847,13 +2999,29 @@
   function pushCurrentToMessages(interrupted) {
     var q = currentQuestion;
     var a = answerRaw || "";
+    var imgN = numOrZero(currentImageCount);
     /* #87 thinking rides only on aborted Messages. Never on done Messages. */
     var th = interrupted ? (currentThinking || "") : "";
     /* #87 Stopped with zero output makes no Message; the one CurrentChat abort line covers it. */
     if (interrupted && trim(a) === "" && trim(th) === "") return;
     if (trim(q) === "" && trim(a) === "") return;
-    currentMessageNode(q, a, th, interrupted);
+    currentMessageNode(q, a, th, interrupted, imgN);
     if (currentBox) currentBox.hidden = true;
+  }
+  /* Prefetch-time stop. fetchCardImages takes the abort. */
+  var prefetchAbort = null;
+  /* Prefetch-chain AbortError falls to the outer then. Hand it to the stop display. */
+  function prefetchFailed(e) {
+    prefetchAbort = null;
+    streamAbort = null;
+    setStreaming(false);
+    refreshSendGates();
+    if (e && e.name === "AbortError") {
+      setStreamStatus(txNow().statusAborted);
+      pushCurrentToMessages(true);
+    } else {
+      setStreamStatus(txNow().statusError + (e && e.message ? e.message : e));
+    }
   }
   function startAskFlow(key, freeText) {
     if (streaming || !currentBox) return;
@@ -2868,82 +3036,115 @@
     resetCurrent(composed.display);
     setStreaming(true);
     setStreamStatus(txNow().statusThinking);
+    if (typeof AbortController !== "undefined") {
+      try { prefetchAbort = new AbortController(); } catch (e) { prefetchAbort = null; }
+    }
     var headers = { "Content-Type": "application/json" };
     try { var bearer = bearerToken(); if (bearer) headers["Authorization"] = "Bearer " + bearer; } catch (e) {}
     try { var cid = threadCardId(); if (cid && isCardIdOk(cid)) headers["x-card-id"] = cid; } catch (eCard) {}
     var chatBody = { question: composed.send };
-    try { var mid = selectedModelId(); if (mid !== "") { chatBody.model = mid; var meff = selectedEffortFor(mid); if (meff !== "") chatBody.effort = meff; } } catch (e0) {}
-    var init = { method: "POST", headers: headers, body: JSON.stringify(chatBody) };
-    if (typeof AbortController !== "undefined") {
-      streamAbort = new AbortController();
-      init.signal = streamAbort.signal;
+    var chatModelId = "";
+    try { var selMid = selectedModelId(); if (selMid !== "") { chatBody.model = selMid; chatModelId = selMid; var selMeff = selectedEffortFor(selMid); if (selMeff !== "") chatBody.effort = selMeff; } } catch (e0) {}
+    var chatSrcs = cardImageList();
+    var badImg = false, goodImg = false;
+    for (var ci = 0; ci < chatSrcs.length; ci++) {
+      if (!/^data:image\//i.test(chatSrcs[ci]) || dataUrlImageSendable(chatSrcs[ci])) goodImg = true; else badImg = true;
     }
-    f(currentApiBase() + "/api/ask/chat", init).then(function(res) {
-      if (res.status === 402 && root.UmeboshiAskHandlePayment) {
-        return res.json().catch(function() { return {}; }).then(function(body) {
-          root.UmeboshiAskHandlePayment(body || {});
-          throw new Error("payment_required");
+    if (badImg && !goodImg) { currentImageCount = 0; setStreaming(false); refreshSendGates(); setStreamStatus(txNow().imageInvalid); prefetchAbort = null; return; }
+    var prefetchSignal = prefetchAbort ? prefetchAbort.signal : null;
+    fetchCardImages(chatSrcs, prefetchSignal).then(function(chatImages) {
+      prefetchAbort = null;
+      if (chatImages.length > 0 && chatModelId !== "" && !modelSupportsImages(chatModelId)) {
+        currentImageCount = 0;
+        setStreaming(false);
+        refreshSendGates();
+        setStreamStatus(txNow().imageBlocked);
+        return;
+      }
+      currentImageCount = chatImages.length;
+      if (chatImages.length > 0) chatBody.images = chatImages;
+      resetCurrent(composed.display);
+      var init = { method: "POST", headers: headers, body: JSON.stringify(chatBody) };
+      if (typeof AbortController !== "undefined") {
+        streamAbort = new AbortController();
+        init.signal = streamAbort.signal;
+      }
+      return f(currentApiBase() + "/api/ask/chat", init).then(function(res) {
+        if (res.status === 402 && root.UmeboshiAskHandlePayment) {
+          return res.json().catch(function() { return {}; }).then(function(body) {
+            root.UmeboshiAskHandlePayment(body || {});
+            throw new Error("payment_required");
+          });
+        }
+        /* #258 OS2c: a settings access token mismatched with the Worker fails silent with 401.
+           Show guidance in the area as a distinct cause from the default-endpoint generic failure. */
+        if (res.status === 401 && readWorkerToken()) {
+          setStreamStatus(txNow().workerTokenInvalid);
+          throw new Error("worker_token_invalid");
+        }
+        if (!res.ok) {
+          return res.text().then(function(text) {
+            var message = txNow().sendFail + res.status + ")";
+            var parsed = null;
+            try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+            if (parsed && parsed.error === "unknown_model" && typeof parsed.fallback === "string" && parsed.fallback !== "") {
+              try { renderModelOptions(parsed.fallback); } catch (e2) {}
+              switchModelNotice(parsed.fallback);
+              setStreamStatus(txNow().sendFailUnknown);
+              throw new Error("unknown_model_switched");
+            }
+            if (parsed && parsed.error === "invalid_effort") {
+              setStreamStatus(txNow().effortInvalid);
+              throw new Error("invalid_effort");
+            }
+            /* Limit violations read guidance, not a code. Model-tagged reads the capable-model guidance. */
+            if (parsed && parsed.error === "invalid_image") {
+              var invGuide = (parsed && typeof parsed.model === "string" && parsed.model !== "")
+                ? txNow().imageBlocked : txNow().imageInvalid;
+              setStreamStatus(invGuide);
+              throw new Error("invalid_image");
+            }
+            if (parsed && parsed.error) message = parsed.error;
+            /* #88 The Worker 502 body carries upstreamPreview (upstream cause with secrets redacted).
+               Dropping it leaves only "LLM upstream error" and the card never learns the cause. */
+            var upPreview = (parsed && typeof parsed.upstreamPreview === "string") ? trim(parsed.upstreamPreview) : "";
+            if (upPreview !== "") message = message + " / " + upPreview.slice(0, 240);
+            throw new Error(message);
+          });
+        }
+        if (!res.body || typeof res.body.getReader !== "function") {
+          return res.text().then(function(text) {
+            var lines = text.split("\n");
+            for (var i = 0; i < lines.length; i++) handleStreamLine(lines[i]);
+            setStreamStatus("");
+          });
+        }
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        return pumpStream(reader, decoder, function(err) {
+          if (err) throw err;
+          if (streamStatus && streamStatus.textContent === txNow().statusThinking) setStreamStatus("");
         });
-      }
-      /* #258 OS2c: a settings access token mismatched with the Worker fails silent with 401.
-         Show guidance in the area as a distinct cause from the default-endpoint generic failure. */
-      if (res.status === 401 && readWorkerToken()) {
-        setStreamStatus(txNow().workerTokenInvalid);
-        throw new Error("worker_token_invalid");
-      }
-      if (!res.ok) {
-        return res.text().then(function(text) {
-          var message = txNow().sendFail + res.status + ")";
-          var parsed = null;
-          try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
-          if (parsed && parsed.error === "unknown_model" && typeof parsed.fallback === "string" && parsed.fallback !== "") {
-            try { renderModelOptions(parsed.fallback); } catch (e2) {}
-            switchModelNotice(parsed.fallback);
-            setStreamStatus(txNow().sendFailUnknown);
-            throw new Error("unknown_model_switched");
-          }
-          if (parsed && parsed.error === "invalid_effort") {
-            setStreamStatus(txNow().effortInvalid);
-            throw new Error("invalid_effort");
-          }
-          if (parsed && parsed.error) message = parsed.error;
-          /* #88 The Worker 502 body carries upstreamPreview (upstream cause with secrets redacted).
-             Dropping it leaves only "LLM upstream error" and the card never learns the cause. */
-          var upPreview = (parsed && typeof parsed.upstreamPreview === "string") ? trim(parsed.upstreamPreview) : "";
-          if (upPreview !== "") message = message + " / " + upPreview.slice(0, 240);
-          throw new Error(message);
-        });
-      }
-      if (!res.body || typeof res.body.getReader !== "function") {
-        return res.text().then(function(text) {
-          var lines = text.split("\n");
-          for (var i = 0; i < lines.length; i++) handleStreamLine(lines[i]);
-          setStreamStatus("");
-        });
-      }
-      var reader = res.body.getReader();
-      var decoder = new TextDecoder();
-      return pumpStream(reader, decoder, function(err) {
-        if (err) throw err;
-        if (streamStatus && streamStatus.textContent === txNow().statusThinking) setStreamStatus("");
-      });
-    }).catch(function(err) {
-      if (err && err.name === "AbortError") {
-        setStreamStatus(txNow().statusAborted);
-      } else if (err && err.message === "invalid_effort") {
-        setStreamStatus(txNow().effortInvalid);
-      } else if (err && err.message !== "payment_required" && err.message !== "unknown_model_switched" && err.message !== "worker_token_invalid") {
-        setStreamStatus(txNow().statusError + (err && err.message ? err.message : err));
-      }
-    }).then(function() {
-      var wasAbort = streamStatus && streamStatus.textContent === txNow().statusAborted;
-      var isErr = streamStatus && streamStatus.textContent.indexOf(txNow().statusError) === 0;
-      streamAbort = null;
-      setStreaming(false);
-      refreshSendGates();
-      if (!isErr) pushCurrentToMessages(!!wasAbort);
-      // On error never hide: it visualizes stream-status (inside #umeboshi-ask-current). 503s show too.
-    });
+      }).catch(function(err) {
+        if (err && err.name === "AbortError") {
+          setStreamStatus(txNow().statusAborted);
+        } else if (err && err.message === "invalid_effort") {
+          setStreamStatus(txNow().effortInvalid);
+        } else if (err && err.message === "invalid_image") {
+          /* Guidance already shown above. Never overwrite it. */
+        } else if (err && err.message !== "payment_required" && err.message !== "unknown_model_switched" && err.message !== "worker_token_invalid") {
+          setStreamStatus(txNow().statusError + (err && err.message ? err.message : err));
+        }
+      }).then(function() {
+        var wasAbort = streamStatus && streamStatus.textContent === txNow().statusAborted;
+        var isErr = streamStatus && streamStatus.textContent.indexOf(txNow().statusError) === 0;
+        streamAbort = null;
+        setStreaming(false);
+        refreshSendGates();
+        if (!isErr) pushCurrentToMessages(!!wasAbort);
+        // On error never hide: it visualizes stream-status (inside #umeboshi-ask-current). 503s show too.
+      }, prefetchFailed);
+    }, prefetchFailed);
   }
   (function wireAskButtons() {
     var box = byId("umeboshi-ask-buttons");
@@ -2961,7 +3162,8 @@
     if (sendBtn && sendBtn.addEventListener) {
       sendBtn.addEventListener("click", function() {
         /* Mid-send this button becomes the stop button. */
-        if (typeof streaming !== "undefined" && streaming) {
+        if (streaming || prefetchAbort) {
+          if (prefetchAbort) { try { prefetchAbort.abort(); } catch (ePre) {} }
           if (streamAbort) streamAbort.abort();
           return;
         }
