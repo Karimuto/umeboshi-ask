@@ -191,7 +191,7 @@ export interface CachedInventoryModel {
   defaultEffort?: EffortValue | null;
   /** #66 True blocks none. Missing reads as false. */
   reasoningMandatory?: boolean;
-  /** Image input support. Derived from inventory architecture input modality. Missing reads as false. */
+  /** Image input support. Derived from inventory architecture input modality. Missing reads as true (unknown = never described, never blocks). */
   supportsImages?: boolean;
 }
 
@@ -408,7 +408,7 @@ export async function resolveModels(store?: ModelStore): Promise<ResolvedModels>
       supportedEfforts: [],
       defaultEffort: null,
       reasoningMandatory: false,
-      supportsImages: false,
+      supportsImages: true,
       selectable: true,
     };
   });

@@ -658,6 +658,7 @@
     for (var i = 0; i < list.length; i++) fn(list[i], i);
   }
   function trim(s) { return (s || "").replace(/^\s+|\s+$/g, ""); }
+  function numOrZero(v) { return (typeof v === "number") ? v : 0; }
 
   function storeArea() {
     try { if (root && root.localStorage) return root.localStorage; } catch (e) {}
@@ -2531,7 +2532,7 @@
     });
   }
   /* ---------- CurrentChat -> save (one at a time. thinking never sent) ---------- */
-  /* Image count binds per sent message. Never read the whole-flow currentImageCount. */
+  /* Image count binds per sent message. Legacy 3-arg callers record 0. */
   function saveOneMessage(question, answer, btn, imageCount) {
     var cardId = threadCardId();
     if (!isCardIdOk(cardId)) {
@@ -2549,11 +2550,8 @@
     }
     if (trim(question) === "") { setThreadStatus(txNow().threadEmptyQ); return; }
     var saveQuestion = question;
-    try {
-      var saveArg = (typeof imageCount === "number") ? imageCount : currentImageCount;
-      var saveN = (typeof saveArg === "number") ? saveArg : 0;
-      if (saveN > 0) saveQuestion = question + txNow().imageSaved.replace("__N__", String(saveN));
-    } catch (eSaveImg) {}
+    var saveN = numOrZero(imageCount);
+    if (saveN > 0) saveQuestion = question + txNow().imageSaved.replace("__N__", String(saveN));
     if ((saveQuestion.length + answer.length) > THREAD_MSG_CHARS) {
       setThreadStatus(txNow().threadTooLong);
       return;
@@ -2624,7 +2622,7 @@
     var save = document.createElement("button");
     save.type = "button";
     setIconText(save, txNow().iconSave, txNow().threadSave);
-    var savedN = (typeof imageCount === "number") ? imageCount : 0;
+    var savedN = numOrZero(imageCount);
     save.addEventListener("click", function() { saveOneMessage(question, answer, save, savedN); });
     row.appendChild(save);
     wrap.appendChild(q);
@@ -2726,7 +2724,7 @@
     if (thinkingBox) { thinkingBox.hidden = true; thinkingBox.open = false; }
     if (currentBox) currentBox.hidden = false;
     var qEl = byId("umeboshi-ask-stream-q");
-    var qImgN = (typeof currentImageCount === "number") ? currentImageCount : 0;
+    var qImgN = numOrZero(currentImageCount);
     if (qEl) qEl.textContent = (q || "") + (qImgN > 0 ? txNow().imageAttached.replace("__N__", String(qImgN)) : "");
     switchedShown = false;
     setStreamStatus("");
@@ -2753,17 +2751,19 @@
     if (typeof src !== "string" || src === "") return false;
     var s = trim(src);
     if (/^https?:\/\//i.test(s)) return false;
-    if (/^data:image\//i.test(s)) return true;
     return true;
   }
+  /* Image caps. Same gate as the Worker (at most 3 images, 10MB each post-base64). */
+  var IMG_MAX = 3, IMG_SCAN_MAX = 12, IMG_B64_MAX = 10 * 1024 * 1024;
   /* Data-URL MIME and size. Same gate as the Worker. Others are dropped. */
   function dataUrlImageSendable(src) {
     if (!/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(src)) return false;
     var b64len = src.length - src.indexOf(",") - 1;
-    if (b64len > 10 * 1024 * 1024) return false;
+    if (b64len > IMG_B64_MAX) return false;
     return true;
   }
-  /* Card Back imgs. Excludes the panel's own container. */
+  /* Card Back imgs. Excludes the panel's own container. Scans the first 12
+     sendable-shaped srcs in doc order; the fetch caps at the first 3 sendable. */
   function cardImageList() {
     var out = [];
     try {
@@ -2778,7 +2778,7 @@
         if (!cardImageSendable(src)) continue;
         if (out.indexOf(src) >= 0) continue;
         out.push(src);
-        if (out.length >= 3) break;
+        if (out.length >= IMG_SCAN_MAX) break;
       }
     } catch (e) {}
     return out;
@@ -2793,7 +2793,7 @@
     if (n(0) === 82 && n(1) === 73 && n(2) === 70 && n(3) === 70 && n(8) === 87 && n(9) === 69 && n(10) === 66 && n(11) === 80) return "image/webp";
     return null;
   }
-  function imageBytesToDataUrl(bytes, src) {
+  function imageBytesToDataUrl(bytes) {
     var mime = imageMimeOfBytes(bytes);
     if (!mime) return null;
     var bin = "";
@@ -2827,9 +2827,10 @@
           e0.name = "AbortError";
           throw e0;
         }
+        if (out.length >= IMG_MAX) return;
         /* data URLs ride as-is: no fetch. MIME/size outside the gate drop silent. */
         if (/^data:image\//i.test(src)) {
-          if (dataUrlImageSendable(src)) out.push(src);
+          if (out.length < IMG_MAX && dataUrlImageSendable(src)) out.push(src);
           return;
         }
         var opts = (signal && typeof signal.aborted === "boolean") ? { signal: signal } : undefined;
@@ -2850,13 +2851,15 @@
             e1.name = "AbortError";
             throw e1;
           }
+          if (out.length >= IMG_MAX) return;
           return res;
         }, function(passErr) { throw passErr; });
         return p.then(function(res) {
+          if (out.length >= IMG_MAX) return;
           if (!res || !res.ok || res.status >= 400) return;
           return res.arrayBuffer().then(function(buf) {
-            var url = imageBytesToDataUrl(new Uint8Array(buf), src);
-            if (url) out.push(url);
+            var url = imageBytesToDataUrl(new Uint8Array(buf));
+            if (url && out.length < IMG_MAX) out.push(url);
           }, function() {});
         }, function(fetchErr) {
           /* abort rides back up the chain. Broken images alone drop silent. */
@@ -2996,7 +2999,7 @@
   function pushCurrentToMessages(interrupted) {
     var q = currentQuestion;
     var a = answerRaw || "";
-    var imgN = (typeof currentImageCount === "number") ? currentImageCount : 0;
+    var imgN = numOrZero(currentImageCount);
     /* #87 thinking rides only on aborted Messages. Never on done Messages. */
     var th = interrupted ? (currentThinking || "") : "";
     /* #87 Stopped with zero output makes no Message; the one CurrentChat abort line covers it. */
@@ -3007,6 +3010,19 @@
   }
   /* Prefetch-time stop. fetchCardImages takes the abort. */
   var prefetchAbort = null;
+  /* Prefetch-chain AbortError falls to the outer then. Hand it to the stop display. */
+  function prefetchFailed(e) {
+    prefetchAbort = null;
+    streamAbort = null;
+    setStreaming(false);
+    refreshSendGates();
+    if (e && e.name === "AbortError") {
+      setStreamStatus(txNow().statusAborted);
+      pushCurrentToMessages(true);
+    } else {
+      setStreamStatus(txNow().statusError + (e && e.message ? e.message : e));
+    }
+  }
   function startAskFlow(key, freeText) {
     if (streaming || !currentBox) return;
     var f = netFetch();
@@ -3030,6 +3046,11 @@
     var chatModelId = "";
     try { var selMid = selectedModelId(); if (selMid !== "") { chatBody.model = selMid; chatModelId = selMid; var selMeff = selectedEffortFor(selMid); if (selMeff !== "") chatBody.effort = selMeff; } } catch (e0) {}
     var chatSrcs = cardImageList();
+    var badImg = false, goodImg = false;
+    for (var ci = 0; ci < chatSrcs.length; ci++) {
+      if (!/^data:image\//i.test(chatSrcs[ci]) || dataUrlImageSendable(chatSrcs[ci])) goodImg = true; else badImg = true;
+    }
+    if (badImg && !goodImg) { currentImageCount = 0; setStreaming(false); refreshSendGates(); setStreamStatus(txNow().imageInvalid); prefetchAbort = null; return; }
     var prefetchSignal = prefetchAbort ? prefetchAbort.signal : null;
     fetchCardImages(chatSrcs, prefetchSignal).then(function(chatImages) {
       prefetchAbort = null;
@@ -3122,31 +3143,8 @@
         refreshSendGates();
         if (!isErr) pushCurrentToMessages(!!wasAbort);
         // On error never hide: it visualizes stream-status (inside #umeboshi-ask-current). 503s show too.
-      }, function(prefetchErr) {
-        prefetchAbort = null;
-        streamAbort = null;
-        setStreaming(false);
-        refreshSendGates();
-        if (prefetchErr && prefetchErr.name === "AbortError") {
-          setStreamStatus(txNow().statusAborted);
-          pushCurrentToMessages(true);
-        } else {
-          setStreamStatus(txNow().statusError + (prefetchErr && prefetchErr.message ? prefetchErr.message : prefetchErr));
-        }
-      });
-    }, function(prefetchAbortErr) {
-      /* Prefetch-chain AbortError falls to the outer then. Hand it to the stop display. */
-      prefetchAbort = null;
-      streamAbort = null;
-      setStreaming(false);
-      refreshSendGates();
-      if (prefetchAbortErr && prefetchAbortErr.name === "AbortError") {
-        setStreamStatus(txNow().statusAborted);
-        pushCurrentToMessages(true);
-      } else {
-        setStreamStatus(txNow().statusError + (prefetchAbortErr && prefetchAbortErr.message ? prefetchAbortErr.message : prefetchAbortErr));
-      }
-    });
+      }, prefetchFailed);
+    }, prefetchFailed);
   }
   (function wireAskButtons() {
     var box = byId("umeboshi-ask-buttons");

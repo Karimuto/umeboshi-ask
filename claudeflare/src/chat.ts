@@ -20,6 +20,7 @@ import {
   defaultEffortFor,
   isValidEffortForModel,
   nextFallbackModel,
+  sortCheapFirst,
   type EffortValue,
   type ResolvedModel,
 } from "./models";
@@ -506,10 +507,20 @@ export async function handleChat(
   // Images ride only to image-capable targets. Never resend images to a text-only model.
   const modelCapable = (id: string): boolean =>
     (allowed.find((m) => m.id === id) ?? BUNDLE_MODELS.find((m) => m.id === id))?.supportsImages !== false;
-  const imageGateFallback = (id: string | null): string | null =>
-    images.length > 0 && id !== null && !modelCapable(id) ? null : id;
-  const s8ImageFallback = imageGateFallback(s8Fallback);
-  const silenceImageFallback = imageGateFallback(silenceFallbackId);
+  const capableFallback = (ids: (string | null)[]): string | null => {
+    for (const id of ids) {
+      if (id !== null && (images.length === 0 || modelCapable(id))) return id;
+    }
+    return null;
+  };
+  // S8: cheapest-selectable-first over allowed excluding current; no-image passthrough keeps old s8Fallback.
+  const s8ImageFallback =
+    images.length === 0
+      ? s8Fallback
+      : capableFallback(sortCheapFirst(allowed).filter((m) => m.id !== model && m.selectable !== false).map((m) => m.id));
+  // S9: single-chain target gated on capability only when images ride.
+  const silenceImageFallback =
+    images.length === 0 || modelCapable(silenceFallbackId ?? "") ? silenceFallbackId : null;
   function imageBlocked(): Response {
     return Response.json({ error: "invalid_image", model }, { status: 400 });
   }

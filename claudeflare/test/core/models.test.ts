@@ -14,6 +14,7 @@ import {
   parseInventoryPayload,
   parseReasoningMeta,
   parseSupportedEfforts,
+  resolveModels,
   sortCheapFirst,
 } from "../../src/models";
 
@@ -302,5 +303,17 @@ describe("image support flag", () => {
     });
     expect(out[0]).toMatchObject({ id: "m/img", supportsImages: true });
     expect(out[1]).toMatchObject({ id: "m/txt", supportsImages: false });
+  });
+
+  it("resolveModels defaults unknown allowlist ids to image-capable", async () => {
+    const store = {
+      get: async () => JSON.stringify(["some-unknown-id"]),
+      put: async () => {},
+      del: async () => {},
+    };
+    const resolved = await resolveModels(store);
+    expect(resolved.source).toBe("allowlist");
+    expect(resolved.models).toHaveLength(1);
+    expect(resolved.models[0]).toMatchObject({ id: "some-unknown-id", supportsImages: true });
   });
 });

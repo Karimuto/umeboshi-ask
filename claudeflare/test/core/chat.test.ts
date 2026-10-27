@@ -746,6 +746,31 @@ describe("images field", () => {
     expect(sent).toEqual([current.id]);
   });
 
+  it("S8 404 with images skips an incapable cheapest fallback for the next capable one", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        sent.push(upstreamModel(init));
+        if (sent.length === 1) return new Response("no such model", { status: 404 });
+        return sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]);
+      }),
+    );
+    const models = BUNDLE_MODELS.map((m) => ({ ...m, selectable: true }));
+    const cheap = { ...models[0]!, supportsImages: false };
+    const capableSecond = { ...models[1]!, supportsImages: true };
+    const current = { ...models[models.length - 1]!, supportsImages: true };
+    const res = await handleChat(
+      postChat({ model: current.id, question: "Q", images: [PNG] }),
+      env,
+      fetch,
+      { models: [cheap, capableSecond, current] },
+    );
+    expect(res.status).not.toBe(400);
+    expect(sent).toEqual([current.id, capableSecond.id]);
+    await res.text().catch(() => undefined);
+  });
+
   it("S9 switch never resends images to an incapable target", async () => {
     const calls: string[] = [];
     vi.stubGlobal(
