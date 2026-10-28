@@ -334,3 +334,82 @@ describe("panel card-context switch", () => {
     assert.equal(en.ctxBox().title || "", "", "no tooltip");
   });
 });
+
+// Save-as-sent: the save seam is the threads POST body after a real send. The
+// saved Message carries today's display question verbatim in both modes (OFF =
+// the bare sent text; ON = the display form, never the composed send), and
+// reopening the saved Thread never sends to the model. Login runs through the
+// settings token (self-host seed), the only auth the OSS base needs.
+const TOKEN_KEY = "umeboshi-ask:worker-token:v1";
+const authed = { [TOKEN_KEY]: "t" };
+
+describe("save Message as sent, Thread stays unsent", () => {
+  // A full ask→answer→save round trip: send first (so currentQuestion is the
+  // sent shape), then click the save button the panel rendered for that
+  // Message, then read the threads POST body.
+  async function sendThenSaveBody({ off, freeText }) {
+    let savedBody = null;
+    const h = await drive({ localInit: authed, onFetch: async (url, init) => {
+      if (url.endsWith("/api/ask/chat")) return sseResp([sseLine({ type: "content", delta: "A." }), sseLine({ type: "done" })]);
+      if (url.includes("/api/ask/threads/") && init?.method === "POST") {
+        savedBody = JSON.parse(init.body);
+        return resp(200, { message: { id: "m1", question: savedBody.question, answer: savedBody.answer } });
+      }
+      return null;
+    }});
+    if (off) setOff(h, false);
+    h.els["umeboshi-ask-input"].value = freeText;
+    h.els["umeboshi-ask-send-btn"].click();
+    await tick(12);
+    const sent = h.chatBody();
+    assert.equal(h.chatCalls().length, 1, "one model send before save");
+    const box = h.els["umeboshi-ask-messages"];
+    assert.ok(box.children.length >= 1, "sent Message rendered with a save button");
+    const saveBtn = box.children.at(-1).children.at(-1).children[0];
+    assert.equal(saveBtn.textContent, "保存", "last row child is the Message save button");
+    saveBtn.click();
+    await tick(12);
+    assert.ok(savedBody, "save POSTed to the threads endpoint");
+    return { h, sent, savedBody };
+  }
+
+  it("OFF-saved Message persists the bare question (display verbatim)", async () => {
+    const { sent, savedBody } = await sendThenSaveBody({ off: true, freeText: "hello world" });
+    assert.equal(sent.question, "hello world", "OFF sends display verbatim");
+    assert.equal(savedBody.question, "hello world", "OFF saves what was sent, not the composed form");
+    assert.equal(savedBody.question, sent.question, "saved Message matches the sent question");
+    assert.ok(!savedBody.question.includes(RAW), "no text context in the saved Message");
+    assert.ok(!savedBody.question.includes(EXTRA), "no extra context in the saved Message");
+  });
+
+  it("ON-saved Message persists today's display question (no composed form kept)", async () => {
+    const { h, sent, savedBody } = await sendThenSaveBody({ off: false, freeText: "hello world" });
+    assert.ok(sent.question.includes(RAW), "ON sends the composed form with card context");
+    assert.equal(h.els["umeboshi-ask-stream-q"].textContent, "hello world", "today's display is the bare question");
+    assert.equal(savedBody.question, "hello world", "ON saves the display shape, not the composed send");
+    assert.equal(savedBody.question, h.els["umeboshi-ask-stream-q"].textContent, "saved Message matches what was shown");
+    assert.ok(!savedBody.question.includes(RAW), "no composed context kept in the saved Message");
+  });
+
+  it("saved-Thread reopen adds zero model sends and messages still reopen", async () => {
+    let savedBody = null;
+    const h = await drive({ localInit: authed, onFetch: async (url, init) => {
+      if (url.endsWith("/api/ask/chat")) return sseResp([sseLine({ type: "done" })]);
+      if (url.includes("/api/ask/threads/") && init?.method === "POST") {
+        savedBody = JSON.parse(init.body);
+        return resp(200, { message: { id: "m1", question: savedBody.question, answer: savedBody.answer } });
+      }
+      if (url.includes("/api/ask/threads/") && (!init?.method || init.method === "GET")) {
+        return resp(200, { messages: [{ id: "m1", question: "kept Q", answer: "kept A" }] });
+      }
+      return null;
+    }});
+    const chatsBefore = h.chatCalls().length;
+    h.sandbox.UmeboshiAskThread.load();
+    await tick(12);
+    h.sandbox.UmeboshiAskThread.load();
+    await tick(12);
+    assert.equal(h.chatCalls().length, chatsBefore, "Thread load/render issues zero model sends");
+    assert.equal(h.sandbox.UmeboshiAskThread.getMessages().length, 1, "saved Thread still reopens");
+  });
+});
