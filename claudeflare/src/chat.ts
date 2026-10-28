@@ -218,14 +218,19 @@ export async function handleChat(
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const raw = (body as { question?: unknown; model?: unknown }).question;
+  const rawBody = recordOf(body);
+  const raw = rawBody ? rawBody["question"] : undefined;
+  // #318 (ctx-switch T1): includeCardContext is additive-only. Read here so the
+  // signal is accepted-and-carried for the panel; any value (missing, false,
+  // true, non-boolean) falls through — never 400 on this key, and the
+  // worker-side question body stays identical.
+  void (rawBody ? rawBody["includeCardContext"] : undefined);
   const question = typeof raw === "string" ? raw.trim() : "";
   if (question === "" || question.length > CHAT_QUESTION_MAX) {
     return Response.json({ error: "Invalid question" }, { status: 400 });
   }
 
   const allowed = chatModels.models ?? BUNDLE_MODELS.map((m) => ({ ...m, selectable: true }));
-  const rawBody = recordOf(body);
   const rawModel = rawBody ? rawBody["model"] : undefined;
   const decided = selectChatModelId(rawModel, allowed);
   if ("unknownModel" in decided) {

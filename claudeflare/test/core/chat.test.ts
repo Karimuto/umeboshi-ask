@@ -802,3 +802,54 @@ describe("images field", () => {
     expect(res.status).not.toBe(500);
   });
 });
+
+describe("includeCardContext is accepted additively (compat-preserving)", () => {
+  // Additive signal: never 400 on this key, upstream question body identical.
+  // The handler may build multimodal parts; the text part stays the bare question.
+  function upstreamUserText(init: RequestInit): string {
+    const user = upstreamUserMessages(init).find((m) => m.role === "user");
+    if (!user) throw new Error("upstream user message missing");
+    if (typeof user.content === "string") return user.content;
+    if (Array.isArray(user.content)) {
+      for (const entry of user.content) {
+        if (entry && typeof entry === "object" && "type" in entry && "text" in entry) {
+          if (entry.type === "text" && typeof entry.text === "string") return entry.text;
+        }
+      }
+    }
+    throw new Error("upstream user text missing");
+  }
+
+  async function expectBareQuestion(body: unknown): Promise<void> {
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleCoreRequest(postChat(body), env);
+    expect(res.status).toBe(200);
+    await res.text().catch(() => undefined);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(upstreamUserText(init)).toBe("Q");
+  }
+
+  it("{question} only answers 200", async () => {
+    await expectBareQuestion({ question: "Q" });
+  });
+
+  it("includeCardContext:false answers 200", async () => {
+    await expectBareQuestion({ question: "Q", includeCardContext: false });
+  });
+
+  it("includeCardContext:true answers 200", async () => {
+    await expectBareQuestion({ question: "Q", includeCardContext: true });
+  });
+
+  it("non-boolean includeCardContext answers 200", async () => {
+    await expectBareQuestion({ question: "Q", includeCardContext: "yes" });
+  });
+
+  it("unknown extra key alongside false answers 200", async () => {
+    await expectBareQuestion({ question: "Q", includeCardContext: false, future_flag: true });
+  });
+});
