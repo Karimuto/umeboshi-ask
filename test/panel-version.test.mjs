@@ -88,3 +88,12 @@ describe("UM1 (#183) the panel version note is one version everywhere", () => {
     assert.ok(addon.includes("def plan_startup_upgrade"), "inject.py lost the inside compare plan");
   });
 });
+
+describe("package version is one version everywhere (#322)", () => {
+  it("root and Worker core package.json agree on the version", () => {
+    const root = JSON.parse(read("package.json"));
+    const core = JSON.parse(read("claudeflare/package.json"));
+    assert.match(root.version, /^\d+\.\d+\.\d+$/, "root package.json version is not SemVer");
+    assert.equal(core.version, root.version, "Worker core version drifted from the root package");
+  });
+});
