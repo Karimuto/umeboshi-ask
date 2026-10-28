@@ -448,6 +448,9 @@
       <button type="button" data-ask="origin">Origin?</button>
       <button type="button" data-ask="eli5">ELI5</button>
     </div>
+    <div class="umeboshi-ask-row" id="umeboshi-ask-cardctx-row">
+      <label><input type="checkbox" id="umeboshi-ask-cardctx" checked> <span id="umeboshi-ask-cardctx-label">カードの問題を添付</span></label>
+    </div>
   <div id="umeboshi-ask-input-row">
     <textarea id="umeboshi-ask-input" rows="2" placeholder="質問を入力"></textarea>
   </div>
@@ -739,6 +742,7 @@
   var LOCALES = {
     ja: {
       why: "なぜ?", what: "なに?", significance: "重要性?", origin: "語源?", eli5: "5歳にもわかるように",
+      cardCtx: "カードの問題を添付",
       send: "送信", search: "設定を検索（例: プロンプト、言語）", askPh: "質問を入力",
       ankiDroidKbHint: "キーボードが出ない？ → 設定で「答えを入力する欄をカード内に表示」をON → 再起動",
       storageReset: "Deckを切り替えるとログインと設定が消えます："
@@ -818,6 +822,7 @@
     },
     en: {
       why: "Why?", what: "What?", significance: "Significance?", origin: "Origin?", eli5: "ELI5",
+      cardCtx: "Attach card problem",
       send: "Send", search: "Search settings", askPh: "Type a question",
       ankiDroidKbHint: "No keyboard? → turn ON \"Type answer into the card\" in settings → restart",
       storageReset: "Signing in and settings are lost when you switch decks: "
@@ -1235,6 +1240,9 @@
     each(qsa("#umeboshi-ask-buttons [data-ask]"), function(btn) {
       btn.textContent = templateLabel(btn.getAttribute("data-ask"), s, t);
     });
+    // Card-context switch label. Rewrite only the label span (no tooltip).
+    var cardCtxLabel = byId("umeboshi-ask-cardctx-label");
+    if (cardCtxLabel) cardCtxLabel.textContent = t.cardCtx;
     renderSendStop();
     if (inputEl) inputEl.placeholder = t.askPh;
     if (searchInput) { searchInput.placeholder = t.search; searchInput.setAttribute("aria-label", t.settingsSearchLabel); }
@@ -2713,6 +2721,12 @@
   var currentImageCount = 0;
   var currentThinking = "";
   var switchedShown = false;
+  // Card-context switch. ON is the default (current behavior). OFF covers one
+  // send only, sending the question text as-is. Kept nowhere, on neither
+  // device nor worker.
+  function cardCtxBox() { return byId("umeboshi-ask-cardctx"); }
+  function cardCtxOn() { var b = cardCtxBox(); return !b || b.checked !== false; }
+  function resetCardCtx() { var b = cardCtxBox(); if (b) b.checked = true; }
   function setStreamStatus(t) { if (streamStatus) streamStatus.textContent = t || ""; }
   function resetCurrent(q) {
     currentQuestion = q;
@@ -2727,6 +2741,7 @@
     var qImgN = numOrZero(currentImageCount);
     if (qEl) qEl.textContent = (q || "") + (qImgN > 0 ? txNow().imageAttached.replace("__N__", String(qImgN)) : "");
     switchedShown = false;
+    resetCardCtx();
     setStreamStatus("");
   }
   function setStreaming(on) {
@@ -2903,9 +2918,12 @@
     var prompt = null;
     try { prompt = UmeboshiAskSettings.resolvePrompt(key); } catch (e) { prompt = null; }
     var label = (prompt && prompt.label) || templateLabel(key);
+    var base = typed !== "" ? typed : label;
+    // OFF skips template substitution, the 2000-char/cloze slicing, and image
+    // collection (startAskFlow keys images off this flag): bare text only.
+    if (!cardCtxOn()) return { display: base, send: base, ctxExcluded: true };
     var body = (prompt && prompt.body) || defaultComposeFallback();
     var rawText = cardField("raw-text") || cardField("text");
-    var base = typed !== "" ? typed : label;
     var q = body.replace(/\{question\}/g, base)
       .replace(/\{text\}/g, rawText.slice(0, 2000))
       .replace(/\{clozeInfo\}/g, buildClozeInfo(rawText))
@@ -3043,9 +3061,12 @@
     try { var bearer = bearerToken(); if (bearer) headers["Authorization"] = "Bearer " + bearer; } catch (e) {}
     try { var cid = threadCardId(); if (cid && isCardIdOk(cid)) headers["x-card-id"] = cid; } catch (eCard) {}
     var chatBody = { question: composed.send };
+    // Attach the false signal only when OFF. ON sends no signal (old-panel compatible).
+    if (composed.ctxExcluded) chatBody.includeCardContext = false;
     var chatModelId = "";
     try { var selMid = selectedModelId(); if (selMid !== "") { chatBody.model = selMid; chatModelId = selMid; var selMeff = selectedEffortFor(selMid); if (selMeff !== "") chatBody.effort = selMeff; } } catch (e0) {}
-    var chatSrcs = cardImageList();
+    // OFF sends bare text only: skip image collection (no chatBody.images).
+    var chatSrcs = composed.ctxExcluded ? [] : cardImageList();
     var badImg = false, goodImg = false;
     for (var ci = 0; ci < chatSrcs.length; ci++) {
       if (!/^data:image\//i.test(chatSrcs[ci]) || dataUrlImageSendable(chatSrcs[ci])) goodImg = true; else badImg = true;
@@ -3175,12 +3196,14 @@
       });
     }
   })();
+  // Card turn/close (same boundary as loadThreadOnOpen): back to ON.
+  function loadThreadAndResetCtx() { resetCardCtx(); loadThreadOnOpen(); }
   root.UmeboshiAskThread = {
-    load: loadThreadOnOpen,
+    load: loadThreadAndResetCtx,
     save: saveOneMessage,
     getMessages: function() { return savedMessages; }
   };
-  loadThreadOnOpen();
+  loadThreadAndResetCtx();
 
   /* ---------- #25 single gate: CardID banner ---------- */
   refreshSendGates();
