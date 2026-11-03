@@ -410,7 +410,22 @@
   .umeboshi-ask-hit { outline: 2px solid var(--ask-accent); background: var(--ask-hit-bg); }
   .umeboshi-ask-note { color: var(--ask-muted); font-size: .8rem; margin: 0; }
   #umeboshi-ask-addon-link { font-size: .8rem; }
-  .umeboshi-ask-row { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; }
+  /* Card-context switch: iOS-style toggle (sterfield demo iOS section).
+     One checkbox by Send/buttons; the label text stays the #317 fixed name.
+     Track 50x31, knob 27px, ON fill #4BD964, knob slides 2px -> 21px. */
+  #umeboshi-ask-cardctx-row { display: flex; align-items: center; margin: .45rem 0 .1rem; }
+  #umeboshi-ask-cardctx-row label { display: inline-flex; align-items: center; gap: .6rem; cursor: pointer; position: relative; }
+  #umeboshi-ask-cardctx { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+  #umeboshi-ask-cardctx-track { display: block; position: relative; width: 50px; height: 31px; flex: none; border-radius: 30px; overflow: hidden; }
+  #umeboshi-ask-cardctx-track::before { content: ""; display: block; position: absolute; width: calc(100% - 3px); height: calc(100% - 3px); top: 0; left: 0; border: 1.5px solid #E5E5EA; border-radius: 30px; background-color: #fff; }
+  #umeboshi-ask-cardctx-track::after { content: ""; display: block; position: absolute; background-color: transparent; width: 0; height: 0; top: 50%; left: 50%; border-radius: 30px; transition: background-color .18s ease-out, width .18s ease-out, height .18s ease-out, top .18s ease-out, left .18s ease-out; }
+  #umeboshi-ask-cardctx-knob { display: block; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 20px; background-color: #fff; box-shadow: 0 2px 6px #999; transition: left .18s ease-out; pointer-events: none; }
+  #umeboshi-ask-cardctx:checked ~ #umeboshi-ask-cardctx-track::after { background-color: #4BD964; top: 0; left: 0; width: 100%; height: 100%; }
+  #umeboshi-ask-cardctx:checked ~ #umeboshi-ask-cardctx-knob { left: 21px; }
+  #umeboshi-ask-cardctx:focus-visible ~ #umeboshi-ask-cardctx-track { outline: 2px solid var(--ask-accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    #umeboshi-ask-cardctx-track::after, #umeboshi-ask-cardctx-knob { transition: none; }
+  }
   .umeboshi-ask-foot {
     display: flex; gap: .5rem; align-items: center;
     padding: .55rem .7rem; border-top: 1px solid var(--ask-border);
@@ -449,7 +464,7 @@
       <button type="button" data-ask="eli5">ELI5</button>
     </div>
     <div class="umeboshi-ask-row" id="umeboshi-ask-cardctx-row">
-      <label><input type="checkbox" id="umeboshi-ask-cardctx" checked> <span id="umeboshi-ask-cardctx-label">カードの問題を添付</span></label>
+      <label><input type="checkbox" id="umeboshi-ask-cardctx" checked><span id="umeboshi-ask-cardctx-track" aria-hidden="true"></span><span id="umeboshi-ask-cardctx-knob" aria-hidden="true"></span><span id="umeboshi-ask-cardctx-label">カードの問題を添付</span></label>
     </div>
   <div id="umeboshi-ask-input-row">
     <textarea id="umeboshi-ask-input" rows="2" placeholder="質問を入力"></textarea>
