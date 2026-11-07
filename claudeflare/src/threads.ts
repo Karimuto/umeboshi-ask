@@ -2,7 +2,7 @@
 // KV: thread body `ask:thread:{userId}:{cardId}`, index `ask:thread:index:{userId}` (50 entries).
 // Limits: 100 Messages per Thread, 20000 chars per Message (question+answer).
 // Match: identity userId wins; x-card-id header mismatch is 400, owner mismatch is 403. Delete is immediate.
-// Saved messages never go to the LLM (excluded from chat payload. ADR 0006).
+// Saved messages never go to the LLM (only the panel's live session turns ride as chat history. ADR 0006).
 
 export const THREAD_MSG_MAX = 100;
 export const THREAD_MSG_CHARS = 20000;
