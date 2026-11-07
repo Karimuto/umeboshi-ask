@@ -379,7 +379,7 @@ function redeemOK(access = "a1", refresh = "r1") {
 }
 
 describe("S13 7シナリオ（フロント振る舞い）", () => {
-  it("①送信payloadは{question}のみ。保存済み解説・thinkingは送らない（D11/ADR 0006）", async () => {
+  it("①初回送信payloadは{question}のみ。保存済み解説・thinkingは送らない（D11/ADR 0006）", async () => {
     const h = await drive({ consent: true, onFetch: async (url) => {
       if (url.endsWith("/api/ask/chat")) return sseResp([sseLine({ type: "done" })]);
       return null;
@@ -388,10 +388,83 @@ describe("S13 7シナリオ（フロント振る舞い）", () => {
     const b = h.chatBody();
     assert.ok(b && typeof b.question === "string");
     assert.match(b.question, /カード文脈/);
-    assert.ok(!("historyMessages" in b));
+    assert.ok(!("history" in b), "first send omits history (single-shot shape)");
     assert.ok(!("thinking" in b));
     const last = h.chatCalls().at(-1);
     assert.equal(last.init.headers["x-card-id"], "1234567890123");
+  });
+
+  it("①フォローアップは同一カードの会話履歴をhistoryで送る（チャット継続）", async () => {
+    const seen = [];
+    const h = await drive({ consent: true, onFetch: async (url, init) => {
+      if (url.endsWith("/api/ask/chat")) {
+        seen.push(JSON.parse(init.body));
+        const turn = seen.length;
+        return sseResp([sseLine({ type: "content", delta: "answer" + turn }), sseLine({ type: "done" })]);
+      }
+      return null;
+    }});
+    await h.ask("why");
+    await h.ask("what");
+    assert.equal(seen.length, 2);
+    assert.ok(!("history" in seen[0]), "first send stays single-shot");
+    assert.ok(Array.isArray(seen[1].history), "follow-up carries history");
+    assert.equal(seen[1].history.length, 1);
+    const whyLabel = h.els["umeboshi-ask-buttons"].children
+      .find((c) => c.getAttribute("data-ask") === "why").textContent;
+    assert.equal(seen[1].history[0].question, whyLabel, "history carries the display question");
+    assert.equal(seen[1].history[0].answer, "answer1");
+    assert.doesNotMatch(JSON.stringify(seen[1].history), /カード文脈/, "history carries display questions, not composed sends");
+  });
+
+  it("①保存済み解説はフォローアップのhistoryに入らない（ADR 0006）", async () => {
+    const seen = [];
+    const TOKEN = "umeboshi-ask:worker-token:v1";
+    const h = await drive({ consent: true,
+      localInit: { [TOKEN]: "t" },
+      onFetch: async (url, init) => {
+        if (url.endsWith("/api/ask/chat")) {
+          seen.push(JSON.parse(init.body));
+          return sseResp([sseLine({ type: "content", delta: "live answer" }), sseLine({ type: "done" })]);
+        }
+        if (url.includes("/api/ask/threads/") && (!init?.method || init.method === "GET")) {
+          return resp(200, { messages: [{ id: "m1", question: "saved Q", answer: "saved A" }] });
+        }
+        return null;
+      }});
+    await tick(12);
+    assert.equal(h.sandbox.UmeboshiAskThread.getMessages().length, 1, "saved Thread reopens");
+    h.els["umeboshi-ask-input"].value = "live Q1";
+    h.els["umeboshi-ask-send-btn"].click();
+    await tick(12);
+    h.els["umeboshi-ask-input"].value = "live Q2";
+    h.els["umeboshi-ask-send-btn"].click();
+    await tick(12);
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1].history.length, 1);
+    assert.equal(seen[1].history[0].question, "live Q1");
+    assert.equal(seen[1].history[0].answer, "live answer");
+    assert.doesNotMatch(JSON.stringify(seen[1].history), /saved Q/, "saved Messages never ride");
+  });
+
+  it("①カードをめくると会話履歴は消える（次カードの初回はhistoryなし）", async () => {
+    const seen = [];
+    const h = await drive({ consent: true, onFetch: async (url, init) => {
+      if (url.endsWith("/api/ask/chat")) {
+        seen.push(JSON.parse(init.body));
+        return sseResp([sseLine({ type: "content", delta: "A" }), sseLine({ type: "done" })]);
+      }
+      return null;
+    }});
+    await h.ask("why");
+    await h.ask("what");
+    assert.equal(seen.length, 2);
+    assert.ok("history" in seen[1], "same-card follow-up carries history");
+    h.sandbox.UmeboshiAskThread.load();
+    await tick(12);
+    await h.ask("origin");
+    assert.equal(seen.length, 3);
+    assert.ok(!("history" in seen[2]), "next card starts single-shot again");
   });
 
   it("①ストリーミング：thinking→content→doneで回答と折りたたみ根拠が表示される（D8）", async () => {

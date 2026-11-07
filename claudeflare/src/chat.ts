@@ -28,10 +28,35 @@ import {
 export const CHAT_MAX_TOKENS = 8192;
 export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const CHAT_QUESTION_MAX = 8000;
+/** Max history turns carried per request. One turn is one Q/A pair of the same card session. */
+export const CHAT_HISTORY_MAX = 10;
+/** Max chars per history turn (question+answer). Same per-Message cap as Thread storage. */
+export const CHAT_HISTORY_CHARS = 20000;
 /** Max images per request. png/jpeg/webp/gif only, 10MB each (post-base64). No total cap. */
 export const CHAT_IMAGES_MAX = 3;
 export const CHAT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const CHAT_IMAGE_DATA_URL = /^data:image\/(png|jpe?g|webp|gif);base64,(.+)$/i;
+
+export interface ChatHistoryTurn {
+  question: string;
+  answer: string;
+}
+
+/** body.history to fixed Q/A turns. Missing reads empty (single-shot legacy). Violations read invalidHistory. */
+export function selectChatHistory(raw: unknown): { history: ChatHistoryTurn[] } | { invalidHistory: true } {
+  if (raw === undefined || raw === null) return { history: [] };
+  if (!Array.isArray(raw) || raw.length > CHAT_HISTORY_MAX) return { invalidHistory: true };
+  const turns: ChatHistoryTurn[] = [];
+  for (const item of raw) {
+    const rec = recordOf(item);
+    if (!rec) return { invalidHistory: true };
+    const question = typeof rec["question"] === "string" ? (rec["question"] as string).trim() : "";
+    const answer = typeof rec["answer"] === "string" ? (rec["answer"] as string).trim() : "";
+    if (question === "" || question.length + answer.length > CHAT_HISTORY_CHARS) return { invalidHistory: true };
+    turns.push({ question, answer });
+  }
+  return { history: turns };
+}
 
 /** body.images to fixed data-URL array. Missing reads empty (legacy string content). Violations read invalidImage. */
 function selectChatImages(raw: unknown): { images: string[] } | { invalidImage: true } {
@@ -250,6 +275,11 @@ export async function handleChat(
       { status: 400 },
     );
   }
+  const decidedHistory = selectChatHistory(rawBody ? rawBody["history"] : undefined);
+  if ("invalidHistory" in decidedHistory) {
+    return Response.json({ error: "invalid_history" }, { status: 400 });
+  }
+  const history = decidedHistory.history;
   const decidedImages = selectChatImages(rawBody ? rawBody["images"] : undefined);
   if ("invalidImage" in decidedImages) {
     return Response.json({ error: "invalid_image" }, { status: 400 });
@@ -271,10 +301,16 @@ export async function handleChat(
     return defaultEffortFor(target);
   }
   function openRouterBody(openRouterModel: string): string {
+    const historyMessages: { role: string; content: string }[] = [];
+    for (const turn of history) {
+      historyMessages.push({ role: "user", content: turn.question });
+      if (turn.answer !== "") historyMessages.push({ role: "assistant", content: turn.answer });
+    }
     const payload: Record<string, unknown> = {
       model: openRouterModel,
       messages: [
         { role: "system", content: CHAT_SYSTEM_PROMPT },
+        ...historyMessages,
         {
           role: "user",
           content:
@@ -454,6 +490,7 @@ export async function handleChat(
     const bearer = (request.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
     const escapedQuestion = JSON.stringify(question).slice(1, -1);
     const secrets: string[] = [openRouterKey ?? "", bearer, question, escapedQuestion,
+      ...history.flatMap((turn) => [turn.question, turn.answer, JSON.stringify(turn.question).slice(1, -1), JSON.stringify(turn.answer).slice(1, -1)]),
       ...images.filter((url) => url.length >= 8)];
     let out = text;
     for (const secret of secrets) {

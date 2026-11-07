@@ -853,3 +853,121 @@ describe("includeCardContext is accepted additively (compat-preserving)", () => 
     await expectBareQuestion({ question: "Q", includeCardContext: false, future_flag: true });
   });
 });
+
+describe("history field (same-card follow-ups)", () => {
+  it("history turns ride upstream as alternating user/assistant messages", async () => {
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleCoreRequest(
+      postChat({
+        question: "each type in detail",
+        history: [
+          { question: "Brugada ECG in detail", answer: "type 2 is saddleback" },
+          { question: "what about type 1", answer: "coved type" },
+        ],
+      }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    await res.text().catch(() => undefined);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const messages = upstreamUserMessages(init);
+    expect(messages[0]).toMatchObject({ role: "system", content: CHAT_SYSTEM_PROMPT });
+    expect(messages.slice(1)).toEqual([
+      { role: "user", content: "Brugada ECG in detail" },
+      { role: "assistant", content: "type 2 is saddleback" },
+      { role: "user", content: "what about type 1" },
+      { role: "assistant", content: "coved type" },
+      { role: "user", content: "each type in detail" },
+    ]);
+  });
+
+  it("missing history keeps the legacy single-shot messages", async () => {
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleCoreRequest(postChat({ question: "Q" }), env);
+    expect(res.status).toBe(200);
+    await res.text().catch(() => undefined);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const messages = upstreamUserMessages(init);
+    expect(messages).toEqual([
+      { role: "system", content: CHAT_SYSTEM_PROMPT },
+      { role: "user", content: "Q" },
+    ]);
+  });
+
+  it("empty-answer turns skip the assistant message; history rides ahead of the image parts", async () => {
+    const PNG = "data:image/png;base64,iVBORw0KGgo=";
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await handleCoreRequest(
+      postChat({ question: "Q", images: [PNG], history: [{ question: "prior", answer: "" }] }),
+      env,
+    );
+    expect(res.status).toBe(200);
+    await res.text().catch(() => undefined);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const messages = upstreamUserMessages(init);
+    expect(messages[0]).toMatchObject({ role: "system" });
+    expect(messages[1]).toEqual({ role: "user", content: "prior" });
+    expect(messages[2]).toMatchObject({
+      role: "user",
+      content: [
+        { type: "text", text: "Q" },
+        { type: "image_url", image_url: { url: PNG } },
+      ],
+    });
+    expect(messages).toHaveLength(3);
+  });
+
+  it("11th turn, empty question, and oversize turn read 400 invalid_history", async () => {
+    const fetchMock = vi.fn(async () =>
+      sseResponse([openRouterChunk({ content: "hi" }), "data: [DONE]\n\n"]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const turn = { question: "q", answer: "a" };
+    const big = { question: "q".repeat(19999), answer: "aa" };
+    for (const history of [
+      Array.from({ length: 11 }, () => ({ ...turn })),
+      [{ question: "  ", answer: "a" }],
+      [big],
+      ["q"],
+      "nope",
+    ]) {
+      const res = await handleCoreRequest(postChat({ question: "Q", history }), env);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: "invalid_history" });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("history text stays out of logs and responses", async () => {
+    const seen: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      seen.push(args.map((a) => String(a)).join(" "));
+    });
+    try {
+      const secret = "history-secret-marker-ABCDEFGH";
+      const detail = JSON.stringify({ error: { message: "bad", echo: secret } });
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(detail, { status: 400 })));
+      const res = await handleChat(
+        postChat({ question: "Q", history: [{ question: secret, answer: "a" }] }),
+        env,
+        fetch,
+      );
+      expect(res.status).toBe(502);
+      const body = JSON.stringify(await res.json());
+      expect(body).not.toContain(secret);
+      expect(seen.join("\n")).not.toContain(secret);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

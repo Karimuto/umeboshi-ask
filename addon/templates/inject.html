@@ -2949,7 +2949,7 @@
 
 
   /* ---------- S6: thread save (one Message at a time, no title, no thinking saved) ----------
-     Saved Messages never go to the LLM (chat payload is {question} only. ADR 0006).
+     Saved Messages never go to the LLM (only live session turns ride as chat history. ADR 0006).
      Save to IndexedDB at once; also to KV while logged in (thread redraws on next view of the card).
      On abort never autosave; keep an unsaved Message and show its save button.
      Caps: 100 Messages per thread, 20000 chars per Message (question+answer), 50 index entries (server side).
@@ -2981,6 +2981,31 @@
   function threadStatusEl() { return byId("umeboshi-ask-thread-status"); }
   function setThreadStatus(t) { var el = threadStatusEl(); if (el) el.textContent = t || ""; }
   var savedMessages = [];
+  /* ---------- Session turns: follow-up questions carry this card's conversation ----------
+     Same-card sends ride as chat history so follow-ups resolve like a chatbot
+     ("each type in detail" still means the last answer's types). Memory only:
+     never persisted, never synced, dropped on card turn (loadThreadOnOpen).
+     Caps: 10 turns per card, 20000 chars per turn (question+answer). Trims the
+     oldest first; answers over the cap send truncated to the tail. Thinking and
+     interrupted zero-answer turns never ride. Saved Messages never ride (S6). */
+  var SESSION_HISTORY_MAX = 10;
+  var SESSION_HISTORY_CHARS = 20000;
+  var sessionTurns = [];
+  function sessionRecord(question, answer) {
+    var q = trim(question == null ? "" : String(question));
+    var a = trim(answer == null ? "" : String(answer));
+    if (q === "") return;
+    if ((q.length + a.length) > SESSION_HISTORY_CHARS) a = a.slice(-(SESSION_HISTORY_CHARS - q.length));
+    sessionTurns.push({ question: q, answer: a });
+    while (sessionTurns.length > SESSION_HISTORY_MAX) sessionTurns.shift();
+  }
+  function sessionHistoryPayload() {
+    var out = [];
+    for (var i = 0; i < sessionTurns.length; i++) {
+      out.push({ question: sessionTurns[i].question, answer: sessionTurns[i].answer });
+    }
+    return out;
+  }
   /* ---------- IndexedDB (memory fallback when unavailable) ---------- */
   function idbSupported() {
     try { return typeof indexedDB !== "undefined" && !!indexedDB.open; } catch (e) { return false; }
@@ -3354,8 +3379,8 @@
   }
   /* ---------- Thread load (redraws on top at next view of the card) ---------- */
   function loadThreadOnOpen() {
+    sessionTurns = [];
     var cardId = threadCardId();
-    if (!isCardIdOk(cardId)) { var b = threadBox(); if (b) b.hidden = true; return; }
     var box = threadBox();
     if (box) box.hidden = false;
     setThreadStatus(txNow().threadLoading);
@@ -3734,6 +3759,9 @@
     /* #87 Stopped with zero output makes no Message; the one CurrentChat abort line covers it. */
     if (interrupted && trim(a) === "" && trim(th) === "") return;
     if (trim(q) === "" && trim(a) === "") return;
+    /* Session history: done turns (and aborted turns with a partial answer) feed
+       follow-ups. Interrupted zero-answer turns stay out of the history. */
+    if (!interrupted || trim(a) !== "") sessionRecord(q, a);
     currentMessageNode(q, a, th, interrupted, imgN);
     if (currentBox) currentBox.hidden = true;
   }
@@ -3774,6 +3802,9 @@
     var chatBody = { question: composed.send };
     // Attach the false signal only when OFF. ON sends no signal (old-panel compatible).
     if (composed.ctxExcluded) chatBody.includeCardContext = false;
+    // Follow-ups carry this card's live session turns. First send omits the key (single-shot shape).
+    var chatHistory = sessionHistoryPayload();
+    if (chatHistory.length > 0) chatBody.history = chatHistory;
     var chatModelId = "";
     try { var selMid = selectedModelId(); if (selMid !== "") { chatBody.model = selMid; chatModelId = selMid; var selMeff = selectedEffortFor(selMid); if (selMeff !== "") chatBody.effort = selMeff; } } catch (e0) {}
     // OFF sends bare text only: skip image collection (no chatBody.images).
@@ -3783,6 +3814,7 @@
       if (!/^data:image\//i.test(chatSrcs[ci]) || dataUrlImageSendable(chatSrcs[ci])) goodImg = true; else badImg = true;
     }
     if (badImg && !goodImg) { currentImageCount = 0; setStreaming(false); refreshSendGates(); setStreamStatus(txNow().imageInvalid); prefetchAbort = null; return; }
+    var historyRetried = false;
     var prefetchSignal = prefetchAbort ? prefetchAbort.signal : null;
     fetchCardImages(chatSrcs, prefetchSignal).then(function(chatImages) {
       prefetchAbort = null;
@@ -3829,6 +3861,10 @@
               setStreamStatus(txNow().effortInvalid);
               throw new Error("invalid_effort");
             }
+            /* History over the cap drops to a context-free retry: clear local turns and send once bare. */
+            if (parsed && parsed.error === "invalid_history") {
+              throw new Error("invalid_history");
+            }
             /* Limit violations read guidance, not a code. Model-tagged reads the capable-model guidance. */
             if (parsed && parsed.error === "invalid_image") {
               var invGuide = (parsed && typeof parsed.model === "string" && parsed.model !== "")
@@ -3862,12 +3898,24 @@
           setStreamStatus(txNow().statusAborted);
         } else if (err && err.message === "invalid_effort") {
           setStreamStatus(txNow().effortInvalid);
+        } else if (err && err.message === "invalid_history") {
+          historyRetried = true;
+          sessionTurns = [];
+          return null;
         } else if (err && err.message === "invalid_image") {
           /* Guidance already shown above. Never overwrite it. */
         } else if (err && err.message !== "payment_required" && err.message !== "unknown_model_switched" && err.message !== "worker_token_invalid") {
           setStreamStatus(txNow().statusError + (err && err.message ? err.message : err));
         }
       }).then(function() {
+        if (historyRetried) {
+          historyRetried = false;
+          streamAbort = null;
+          setStreaming(false);
+          refreshSendGates();
+          startAskFlow(key, freeText);
+          return;
+        }
         var wasAbort = streamStatus && streamStatus.textContent === txNow().statusAborted;
         var isErr = streamStatus && streamStatus.textContent.indexOf(txNow().statusError) === 0;
         streamAbort = null;
