@@ -6,7 +6,7 @@ about: Report a problem
 ## Setup
 
 - Panel version note
-  (`umeboshi-ask:panel-version`, e.g. 1.4.2):
+  (`umeboshi-ask:panel-version`, e.g. 1.5.0):
 - Worker URL type (official / self-hosted):
 - Device (Desktop / AnkiDroid / Web):
 - `wrangler` version (self-hosted only):
