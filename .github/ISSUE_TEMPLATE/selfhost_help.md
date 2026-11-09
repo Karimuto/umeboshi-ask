@@ -6,7 +6,7 @@ about: Ask for help with self-hosting
 ## Setup
 
 - Panel version note
-  (`umeboshi-ask:panel-version`, e.g. 1.4.2):
+  (`umeboshi-ask:panel-version`, e.g. 1.5.0):
 - Worker URL (self-hosted URL only;
   never paste the access token):
 - Device (Desktop / AnkiDroid / Web):

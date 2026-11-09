@@ -1,6 +1,6 @@
 {
   "name": "@umeboshi/ask",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Self-hosted study helper for Anki (Worker core, panel source, add-on)",
   "license": "MIT",
   "type": "module",
